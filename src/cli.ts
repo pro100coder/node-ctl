@@ -1,11 +1,13 @@
 // node-ctl: disposable dev machines on Hetzner Cloud or Contabo. The entry point: global options,
 // help (answered before anything is read, so it works on a fresh install), then one command.
+import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { UserError } from './errors.ts';
 import { PAGES, USAGE } from './help.ts';
 import { openLog, tee } from './log.ts';
 import { paths } from './paths.ts';
 import { cancel, whenCancelled } from './proc.ts';
+import { stdinInput, type Input, type Ui } from './ui.ts';
 import { Progress, renderersFor, resolveMode, type Mode } from './progress/progress.ts';
 import type { Out } from './progress/types.ts';
 
@@ -21,12 +23,16 @@ interface Io {
   screen?: Out; // stderr past the log, where the renderers draw; stderr itself when there is no log
   color?: boolean;
   columns?: number;
+  rows?: number;
+  input?: Input; // stdin unless a test hands one in
+  raw?: (on: boolean) => void; // the terminal's raw mode, for a drawn menu
 }
 
 interface Context {
   args: string[];
   yes: boolean; // --yes: the answer to every confirmation, for scripts
   progress: Progress;
+  ui: Ui;
   io: Io;
 }
 
@@ -169,7 +175,20 @@ async function dispatch(
     }
     const handler = handlers.get(command);
     if (!handler) throw new UserError(`${command} is not implemented yet`);
-    await handler({ args: globals.args, yes: globals.yes, progress, io });
+    const input = io.input ?? stdinInput();
+    const ui: Ui = {
+      input,
+      stderr: io.stderr,
+      yes: globals.yes,
+      home: io.env.HOME || homedir(),
+      drawn: io.terminal && input.terminal && (io.columns ?? 0) >= 50,
+      color: io.color ?? false,
+      columns: io.columns ?? 80,
+      rows: io.rows ?? 24,
+      suspend: () => progress.suspend(),
+      raw: io.raw,
+    };
+    await handler({ args: globals.args, yes: globals.yes, progress, ui, io });
     progress.close();
     return 0;
   } catch (e) {
@@ -201,6 +220,8 @@ export async function entry(argv: string[], handlers?: Map<string, Handler>): Pr
       terminal: Boolean(process.stderr.isTTY),
       color: (Boolean(process.stdout.isTTY) || Boolean(env.FORCE_COLOR)) && !env.NO_COLOR,
       columns: process.stderr.columns,
+      rows: process.stderr.rows,
+      raw: (on) => process.stdin.setRawMode?.(on),
     },
     handlers,
   );
