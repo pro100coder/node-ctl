@@ -29,16 +29,32 @@ export class HttpError extends Error {
   }
 }
 
-// The parsed JSON of the answer, null for an empty one.
-export async function request(env: Env, api: Api, path: string, init: RequestInit = {}): Promise<unknown> {
+// The parsed JSON of the answer, null for an empty one. With retries, any failure (a dropped connection,
+// a timeout, an HTTP error) is tried again after 1, 2, 4 ... s, as curl --retry --retry-all-errors did;
+// timeout bounds each attempt, as --max-time.
+export async function request(
+  env: Env,
+  api: Api,
+  path: string,
+  init: RequestInit = {},
+  opts: { timeout?: number; retries?: number } = {},
+): Promise<unknown> {
   const url = apiUrl(env, api, path);
-  const res = await fetch(url, init);
-  const text = await res.text();
-  if (!res.ok) throw new HttpError(init.method ?? 'GET', url, res.status, text);
-  return text ? JSON.parse(text) : null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url, opts.timeout ? { ...init, signal: AbortSignal.timeout(opts.timeout) } : init);
+      const text = await res.text();
+      if (!res.ok) throw new HttpError(init.method ?? 'GET', url, res.status, text);
+      return text ? JSON.parse(text) : null;
+    } catch (e) {
+      if (attempt >= (opts.retries ?? 0)) throw e;
+      await sleep(1000 * 2 ** attempt, env);
+    }
+  }
 }
 
 // Every wait between polls; NODE_CTL_NO_WAIT=1 makes them all zero (the bats suite's sleep stub, in process).
+// Zero is still a timer: a poll loop yields to the children and sockets it waits on.
 export function sleep(ms: number, env: Env = process.env): Promise<void> {
-  return env.NODE_CTL_NO_WAIT === '1' ? Promise.resolve() : Bun.sleep(ms);
+  return Bun.sleep(env.NODE_CTL_NO_WAIT === '1' ? 0 : ms);
 }
