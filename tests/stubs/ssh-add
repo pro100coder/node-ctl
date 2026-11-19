@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Test stub: -L lists $STUB_AGENT_KEYS as the agent's public keys; adding a key is only recorded.
+echo "ssh-add: $*" >> "$STUB_LOG"
+case $1 in
+  -L) [ -n "${STUB_AGENT_KEYS:-}" ] && echo "$STUB_AGENT_KEYS" || exit 1 ;;
+  -l) [ -n "${STUB_AGENT_KEYS:-}" ] || exit 1 ;;
+esac

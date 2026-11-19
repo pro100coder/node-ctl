@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Test stub: the renderer is replaced by a file that collects the raw events ($STUB_EVENTS);
+# STUB_NODE_DRAW is what it draws on its stderr, to see where the drawing lands.
+echo "node: $*" >> "$STUB_LOG"
+[ -z "${STUB_NODE_DRAW:-}" ] || echo "$STUB_NODE_DRAW" >&2
+exec cat >> "$STUB_EVENTS"

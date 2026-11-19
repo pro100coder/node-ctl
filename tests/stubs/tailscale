@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Test stub: the local Tailscale daemon. It knows a machine's address only when STUB_TAILSCALE_IP
+# is set (like the real CLI, `ip` fails otherwise); `status --json` lists the peers named in
+# STUB_TAILSCALE_PEERS ("dev1=online dev2=offline"); STUB_TAILSCALE_DOWN=1 makes it a stopped tailnet.
+echo "tailscale: $*" >> "$STUB_LOG"
+[ -z "${STUB_TAILSCALE_DOWN:-}" ] || { echo "Tailscale is stopped." >&2; exit 1; }
+if [ "$1" = status ]; then
+  [ "${2:-}" = --json ] || exit 0
+  peers=''
+  for p in ${STUB_TAILSCALE_PEERS:-}; do
+    online=false; [ "${p#*=}" != online ] || online=true
+    peers="$peers${peers:+,}\"n${p%%=*}\":{\"DNSName\":\"${p%%=*}.tailtest.ts.net.\",\"Online\":$online}"
+  done
+  echo "{\"MagicDNSSuffix\":\"tailtest.ts.net\",\"Peer\":{$peers}}"
+  exit 0
+fi
+[ -n "${STUB_TAILSCALE_IP:-}" ] || exit 1
+echo "$STUB_TAILSCALE_IP"

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Test stub: records the ssh command line and, for piped scripts, the script itself.
+# STUB_SSH_RC / STUB_SSH_ERR fake a machine that never answers, STUB_SSH_OUT what it prints.
+echo "ssh: $*" >> "$STUB_LOG"
+# STUB_SSH_HOME runs a pushed tree's remote command for real, with that HOME (bsdtar here knows no --warning)
+# STUB_CATO_OUT / STUB_CATO_RC are what a Cato script on the machine answers (the login URL, or "connected") and exits with
+case "$*" in *"bash -s"*) script=$(cat); echo "$script" >> "$STUB_LOG"; case $script in *"still disconnected"*) echo "connected, pop name: stub" ;; # the wait after a sign-in: the browser did its part
+    *cato-sdp*) echo "${STUB_CATO_OUT:-}"; exit "${STUB_CATO_RC:-0}" ;; esac ;; esac
+case "$*" in *"tar -xzf - -C node-ctl-skills"*)
+  if [ -n "${STUB_SSH_HOME:-}" ]; then cmd=${!#}; HOME=$STUB_SSH_HOME bash -c "${cmd//--warning=no-unknown-keyword/}" || exit; else tar -tzf - >> "$STUB_LOG"; fi ;;
+esac
+# STUB_CLOUD_INIT_RC fakes cloud-init's own verdict, STUB_CLOUD_INIT_JSON what its status says then.
+[ -z "${STUB_SSH_ERR:-}" ] || echo "$STUB_SSH_ERR" >&2
+[ -z "${STUB_SSH_OUT:-}" ] || echo "$STUB_SSH_OUT" # what a remote command prints
+case "$*" in
+  *"cloud-init status --wait"*) exit "${STUB_CLOUD_INIT_RC:-${STUB_SSH_RC:-0}}" ;;
+  *"cloud-init status --format json || true"*) echo "${STUB_CLOUD_INIT_JSON:-{\"errors\":[]\}}" ;;
+  *"cloud-init status --format json"*) echo "${STUB_CLOUD_INIT_JSON:-{\"errors\":[]\}}"; exit "${STUB_CLOUD_INIT_RC:-0}" ;;
+esac
+exit "${STUB_SSH_RC:-0}"

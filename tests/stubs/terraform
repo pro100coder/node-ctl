@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Test stub: records the command, with the workspace and the credentials of the account it ran for
+# (Hetzner: its token; Contabo: client id, API user and password). STUB_TF_RC fakes a failed apply,
+# with a line on each stream like the real one; STUB_TF_STATE is what `state list` prints.
+creds="token ${HCLOUD_TOKEN:-}"
+[ -z "${CNTB_OAUTH2_USER:-}" ] || creds="contabo ${CNTB_OAUTH2_CLIENT_ID:-}/${CNTB_OAUTH2_USER}/${CNTB_OAUTH2_PASS:-}"
+echo "terraform: $*${TF_WORKSPACE:+ (workspace $TF_WORKSPACE, account ${TF_VAR_account:-}, $creds)}" >> "$STUB_LOG"
+case "$*" in
+  *"state list"*) [ -z "${STUB_TF_STATE:-}" ] || printf '%s\n' "$STUB_TF_STATE" ;; # the addresses the state holds
+  *apply*)
+    echo "hcloud_server.machine[\"dev1\"]: Creating..."
+    [ "${STUB_TF_RC:-0}" = 0 ] || echo "Error: requested tags [tag:dev] are invalid" >&2
+    exit "${STUB_TF_RC:-0}" ;;
+esac

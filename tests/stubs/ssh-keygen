@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Test stub: records the arguments. `-R <host> -f <file>` drops that host's known_hosts lines and
+# `-lf -` prints a fingerprint derived from the key on stdin, both like the real one; every other
+# call writes a fake key pair where -f points.
+echo "ssh-keygen: $*" >> "$STUB_LOG"
+f='' remove='' fingerprint=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    -lf) fingerprint=1; f=$2; shift ;;
+    -f) f=$2; shift ;;
+    -R) remove=$2; shift ;;
+  esac
+  shift
+done
+[ -n "$f" ] || exit 1
+if [ -n "$fingerprint" ]; then
+  read -r _ type key || exit 1
+  echo "256 SHA256:fp-$key no comment (${type#ssh-})"
+  exit 0
+fi
+if [ -n "$remove" ]; then
+  [ ! -s "$f" ] || { grep -v "^$remove " "$f" > "$f.tmp"; mv "$f.tmp" "$f"; }
+  exit 0
+fi
+printf 'PRIVATE-TEST-KEY\n' > "$f"
+printf 'ssh-ed25519 AAAAgit node-ctl-user commit key\n' > "$f.pub"

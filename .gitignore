@@ -1,0 +1,11 @@
+.env
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform/tfplan
+node-ctl.log
+node-ctl.log.1
+servers/*.json
+keys/
+node-ctl.yaml
+.claude/reports/

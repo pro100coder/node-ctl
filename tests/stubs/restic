@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Test stub: records the command; STUB_FAIL containing "restic-cat" simulates an uninitialised repository.
+echo "restic: $*" >> "$STUB_LOG"
+[[ "$1 $2" != "cat config" || " ${STUB_FAIL:-} " != *" restic-cat "* ]] || exit 1

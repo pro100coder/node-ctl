@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Test stub: the suite must never load a job into the caller's launchd; the call goes to the log instead.
+echo "launchctl: $*" >> "$STUB_LOG"

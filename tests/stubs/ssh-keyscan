@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Test stub: the host keys of the last argument. STUB_KEYSCAN_RC=1 fakes a name nothing answers under.
+echo "ssh-keyscan: $*" >> "$STUB_LOG"
+[ "${STUB_KEYSCAN_RC:-0}" = 0 ] || { echo "getaddrinfo failed" >&2; exit "$STUB_KEYSCAN_RC"; }
+host=''
+for host in "$@"; do :; done
+echo "$host ssh-ed25519 AAAAhostkey-$host"

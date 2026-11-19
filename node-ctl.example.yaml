@@ -1,0 +1,44 @@
+# node-ctl configuration. ./node-ctl init fills it in step by step; ./node-ctl check verifies it.
+# Copied to node-ctl.yaml (gitignored: it holds every secret) on the first run of init.
+
+# Hetzner Cloud accounts: a tag of your choice -> API token of that project
+# (console -> project -> Security -> API tokens -> Generate API token, permission Read & Write).
+# One entry per project, e.g. `work: <token>` and `home: <token>`. Every machine belongs to one
+# (servers/<name>.json: "account"); with several, ./node-ctl create asks which, or takes --account <tag>.
+hetzner: {}
+
+# Contabo accounts (optional): a tag of your choice -> the API credentials of one customer account
+# (Customer Control Panel -> Account -> Security & Access). A tag names one account, so it also says
+# which provider a machine lives on; Hetzner and Contabo tags must not collide.
+#contabo:
+#  work:
+#    client_id: ""
+#    client_secret: ""
+#    user: ""       # the e-mail you log in with
+#    password: ""   # that API user's own password: "Send link" on that page mails a link to set it
+contabo: {}
+
+# Tailscale OAuth client with scopes auth_keys (write) and devices:core (write), tag tag:dev
+tailscale:
+  client_id: ""
+  client_secret: ""
+
+# Public key installed on every machine (path on this host)
+ssh_public_key_file: ~/.ssh/id_ed25519.pub
+
+# Optional: restic repository for backup/archive/restore, e.g. s3:https://nbg1.your-objectstorage.com/BUCKET
+# (any S3-compatible storage); an empty repository = no archives
+restic:
+  repository: ""
+  password: ""
+  access_key_id: ""
+  secret_access_key: ""
+
+# Defaults for ./node-ctl create (optional); per provider, since neither the types nor the
+# locations are the same (Hetzner cx23/nbg1, Contabo V45/EU)
+#defaults:
+#  type: cx23
+#  location: nbg1
+#  contabo:
+#    type: V45
+#    location: EU

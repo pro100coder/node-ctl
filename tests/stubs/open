@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Test stub: a browser must never open during the suite; the URL goes to the log instead.
+echo "open: $*" >> "$STUB_LOG"
