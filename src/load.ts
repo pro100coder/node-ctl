@@ -1,35 +1,16 @@
 // ssh and load: the two commands that hand a machine's output straight to this terminal.
-import type { Handler } from './cli.ts';
-import { loadConfig } from './config.ts';
+import { reach, setup, target, type Ctx } from './command.ts';
 import { UserError } from './errors.ts';
 import { sleep } from './http.ts';
 import { exists, machineNames, readMachine } from './inventory.ts';
-import { paths } from './paths.ts';
 import { spawn } from './proc.ts';
-import { addr, ensureKey, ensureTailscale, tssh } from './ssh.ts';
-import { pickMachine, targeted } from './target.ts';
+import { addr, tssh } from './ssh.ts';
 import report from '../scripts/load.sh' with { type: 'text' };
 
-type Ctx = Parameters<Handler>[0];
-
-function setup({ io }: Ctx) {
-  const p = paths(io.env);
-  return { p, config: loadConfig(p.config, io.env) };
-}
-
-// What every command that reaches a machine does first: the key in the agent, the tailnet on. False
-// when ssh-add could not load the key (it said why on the terminal).
-async function reachable(ctx: Ctx, publicKey: string): Promise<boolean> {
-  if (!(await ensureKey(ctx.progress, publicKey, ctx.io.env))) return false;
-  await ensureTailscale(ctx.io.env);
-  return true;
-}
-
-export const ssh: Handler = async (ctx) => {
-  const { p, config } = setup(ctx);
-  let args = ctx.args;
-  if (ctx.ui.input.terminal && !targeted(args)) args = [await pickMachine(ctx.ui, p.servers, 'ssh', ['running']), ...args];
-  if (!(await reachable(ctx, config.sshPublicKeyFile))) return 1;
+export const ssh = async (ctx: Ctx): Promise<number> => {
+  const run = setup(ctx);
+  const args = await target(ctx, run.p.servers, 'ssh', ['running']);
+  if (!(await reach(run))) return 1;
   const [name, ...rest] = args;
   if (!name) throw new UserError('usage: ./node-ctl ssh <name> [cmd ...]');
   const argv = tssh(`node-ctl-user@${await addr(name, ctx.io.env)}`, ...rest);
@@ -81,8 +62,9 @@ async function sampleAll(ctx: Ctx, servers: string, mode: string, color: string)
   }
 }
 
-export const load: Handler = async (ctx) => {
-  const { p, config } = setup(ctx);
+export const load = async (ctx: Ctx): Promise<number | void> => {
+  const run = setup(ctx);
+  const { p, config } = run;
   let name = '';
   let mode = 'once';
   for (const a of ctx.args) {
@@ -90,7 +72,7 @@ export const load: Handler = async (ctx) => {
     else if (a.startsWith('-')) throw new UserError('usage: ./node-ctl load [-f] [name]');
     else name = a;
   }
-  if (!(await reachable(ctx, config.sshPublicKeyFile))) return 1;
+  if (!(await reach(run))) return 1;
   const color = ctx.io.color ? 'color' : 'mono'; // colours are decided here, the machine only gets the word
   if (!name) return sampleAll(ctx, p.servers, mode, color);
   exists(config, p.servers, name);

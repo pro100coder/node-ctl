@@ -95,7 +95,7 @@ export interface Menu {
 }
 
 // read -r: the prompt only when stdin is a terminal, leading and trailing blanks dropped.
-async function read(ui: Ui, prompt: string): Promise<{ text: string; eof: boolean }> {
+export async function read(ui: Ui, prompt: string): Promise<{ text: string; eof: boolean }> {
   if (ui.input.terminal) ui.stderr.write(prompt);
   const r = await ui.input.line();
   return { text: r.text.replace(/^[ \t]+|[ \t]+$/g, ''), eof: r.eof };

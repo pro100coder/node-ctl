@@ -35,9 +35,24 @@ export async function addr(name: string, env: Env = process.env, app = APP): Pro
 // remote <name> <script>: the script runs as root on the machine, read from stdin, so the secrets it
 // carries (restic keys, the commit key) never touch a command line. With a progress, its lines are
 // logs of the open action (action_run remote); without one, they are the result.
-export async function remote(name: string, script: string, opts: { progress?: Progress; env?: Env; app?: string } = {}) {
+// onLine instead: its lines, both streams in the order they came, are the caller's (cato's login URL).
+type RemoteOptions = { progress?: Progress; env?: Env; app?: string; onLine?: (line: string) => void };
+export async function remote(name: string, script: string, opts: RemoteOptions = {}) {
   const argv = tssh(`node-ctl-user@${await addr(name, opts.env, opts.app)}`, 'sudo', 'bash', '-s');
-  return opts.progress ? actionRun(opts.progress, argv, { stdin: script, env: opts.env }) : spawn(argv, { stdin: script, env: opts.env });
+  if (opts.progress) return actionRun(opts.progress, argv, { stdin: script, env: opts.env });
+  return spawn(argv, { stdin: script, env: opts.env, onLine: opts.onLine });
+}
+
+// The MagicDNS suffix of this host's tailnet (tailXXXX.ts.net); '' without the CLI or an answer.
+export async function tailnetSuffix(env: Env = process.env, app = APP): Promise<string> {
+  const cli = tailscaleCli(env, app);
+  if (!cli) return '';
+  try {
+    const status = JSON.parse((await spawn([cli, 'status', '--json'], { env })).stdout) as { MagicDNSSuffix?: unknown };
+    return typeof status.MagicDNSSuffix === 'string' ? status.MagicDNSSuffix : '';
+  } catch {
+    return '';
+  }
 }
 
 // The private key sits in ssh-agent, so BatchMode ssh calls never need the passphrase. False only when

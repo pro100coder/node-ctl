@@ -13,8 +13,10 @@ type Stream = 'stdout' | 'stderr';
 interface SpawnOptions {
   env?: Record<string, string | undefined>; // on top of this process's environment, for this child only
   cwd?: string;
-  stdin?: string | 'inherit'; // a script, or the terminal; nothing otherwise
+  stdin?: string | Uint8Array | 'inherit'; // a script or an archive, or the terminal; nothing otherwise
   inherit?: boolean; // stdout and stderr are the terminal's (ssh-add asking for a passphrase)
+  bytes?: boolean; // stdout is data (an archive), kept as it came in Result.bytes; onLine sees stderr only
+  signal?: AbortSignal; // kills the child (an ssh port forward that lives as long as a step)
   onLine?: (line: string, stream: Stream) => void;
 }
 
@@ -22,6 +24,7 @@ interface Result {
   status: number; // the exit status; 128 + the signal for a child killed by one, 127 when there is no such command
   stdout: string;
   stderr: string;
+  bytes?: Uint8Array;
 }
 
 const live = new Set<Promise<unknown>>();
@@ -80,9 +83,16 @@ export async function spawn(argv: string[], opts: SpawnOptions = {}): Promise<Re
     stdin: opts.stdin === undefined ? 'ignore' : opts.stdin === 'inherit' ? 'inherit' : Buffer.from(opts.stdin),
     stdout: out,
     stderr: out,
+    signal: opts.signal,
   });
+  let bytes: Uint8Array | undefined;
+  const readStdout = async (s: ReadableStream<Uint8Array>) => {
+    if (!opts.bytes) return lines(s, 'stdout', opts.onLine);
+    bytes = await new Response(s).bytes();
+    return '';
+  };
   const done = Promise.all([
-    proc.stdout instanceof ReadableStream ? lines(proc.stdout, 'stdout', opts.onLine) : '',
+    proc.stdout instanceof ReadableStream ? readStdout(proc.stdout) : '',
     proc.stderr instanceof ReadableStream ? lines(proc.stderr, 'stderr', opts.onLine) : '',
     proc.exited,
   ]);
@@ -91,7 +101,7 @@ export async function spawn(argv: string[], opts: SpawnOptions = {}): Promise<Re
   // Once Ctrl+C came, nothing goes on after a child: bash ran its INT trap however the child ended.
   if (cancelling || proc.signalCode === 'SIGINT') return cancel();
   const signal = proc.signalCode ? constants.signals[proc.signalCode] : undefined;
-  return { status: signal ? 128 + signal : (proc.exitCode ?? 1), stdout, stderr };
+  return { status: signal ? 128 + signal : (proc.exitCode ?? 1), stdout, stderr, ...(bytes ? { bytes } : {}) };
 }
 
 // json_str dropped carriage returns and ESC from a message: a progress bar's \r or a colour code is no text.

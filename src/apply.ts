@@ -1,6 +1,7 @@
 // apply: Terraform once per account, in its provider's root and workspace, then what follows from the
 // inventory on this computer (~/.ssh/config.d/node-ctl). Used by init and accounts add to register
-// the ssh key with a new account; the apply command itself (T05b) adds the machine sync.
+// the ssh key with a new account, and by every command that edits the inventory; the apply command
+// (machine.ts) adds the machine sync.
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { accounts, account, type Config } from './config.ts';
@@ -57,7 +58,8 @@ async function contaboInstancesFirst(config: Config, at: Where, progress: Progre
   }
 }
 
-async function terraform(config: Config, at: Where, progress: Progress, env: Env): Promise<void> {
+// do_apply: what the Apply Terraform step runs; resize runs it alone, to undo its edit when it fails.
+async function doApply(config: Config, at: Where, progress: Progress, env: Env): Promise<void> {
   const tf = { config, home: at.home, progress, env };
   await step(progress, 'terraform init', 'init', () => tfInit(tf, 'hetzner'));
   if (Object.keys(config.contabo).length) await step(progress, 'terraform init (contabo)', 'init', () => tfInit(tf, 'contabo'));
@@ -81,7 +83,7 @@ async function writeSshConfig(servers: string, file: string, env: Env): Promise<
   renameSync(`${file}.tmp`, file);
 }
 
-async function updateSshConfig(servers: string, file: string, progress: Progress, env: Env): Promise<void> {
+export async function updateSshConfig(servers: string, file: string, progress: Progress, env: Env): Promise<void> {
   try {
     await writeSshConfig(servers, file, env);
   } catch {
@@ -91,7 +93,7 @@ async function updateSshConfig(servers: string, file: string, progress: Progress
 
 export async function apply(config: Config, at: Where, progress: Progress, env: Env, retry = './node-ctl apply'): Promise<void> {
   ensureAccounts(config, at.servers); // a machine of an unknown account is in no workspace, and no apply would ever see it
-  if (!(await progress.withAction('Apply Terraform', 'apply', () => terraform(config, at, progress, env)))) {
+  if (!(await progress.withAction('Apply Terraform', 'apply', () => doApply(config, at, progress, env)))) {
     throw new UserError(`terraform apply failed: the inventory is updated, the infrastructure is not; fix the cause, then: ${retry}`);
   }
   for (const name of machineNames(at.servers)) {

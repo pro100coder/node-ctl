@@ -2,11 +2,13 @@
 // help (answered before anything is read, so it works on a fresh install), then one command.
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
+import { cato } from './cato.ts';
 import { check } from './check.ts';
 import { UserError } from './errors.ts';
 import { accountsCommand, init } from './init.ts';
 import { list } from './list.ts';
 import { load, ssh } from './load.ts';
+import { apply, expose, gitkey, hostkeys, ports, volume } from './machine.ts';
 import { PAGES, USAGE } from './help.ts';
 import { openLog, tee } from './log.ts';
 import { paths } from './paths.ts';
@@ -63,6 +65,13 @@ const ported = new Map<string, Handler>([
   ['check', check],
   ['init', init],
   ['accounts', accountsCommand],
+  ['apply', apply],
+  ['ports', ports],
+  ['expose', expose],
+  ['volume', volume],
+  ['gitkey', gitkey],
+  ['hostkeys', hostkeys],
+  ['cato', cato],
 ]);
 
 // Only the options before the command are global: after it every word is the command's (ssh passes them on).
