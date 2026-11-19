@@ -74,11 +74,18 @@ test('--progress and NODE_CTL_PROGRESS are validated before any command runs', a
   expect((await run(['--progress', 'json', 'version'], { NODE_CTL_PROGRESS: 'fancy' })).code).toBe(0); // the flag wins
 });
 
-test('a command not ported yet fails clearly and touches nothing', async () => {
+test('a dispatched command without a handler fails clearly and touches nothing', async () => {
   const home = mkdtempSync(join(tmpdir(), 'node-ctl-home-'));
-  const r = await run(['test'], { NODE_CTL_HOME: home, NODE_CTL_PROGRESS: 'json', NODE_CTL_EVENTS: join(home, 'events.jsonl') });
-  expect(r).toEqual({ code: 1, out: '', err: 'node-ctl: test is not implemented yet\n' });
+  const env = { NODE_CTL_HOME: home, NODE_CTL_LOG: join(home, 'log'), NODE_CTL_PROGRESS: 'json', NODE_CTL_EVENTS: join(home, 'events.jsonl') };
+  const io = { stdout: new Sink(), stderr: new Sink(), env, terminal: false };
+  expect(await main(['list'], io, new Map())).toBe(1);
+  expect([io.stdout.text, io.stderr.text]).toEqual(['', 'node-ctl: list is not implemented yet\n']);
   expect(existsSync(join(home, 'events.jsonl'))).toBe(false);
+});
+
+test('there is no test command: the suite is bun run check and bats, not the CLI', async () => {
+  expect(COMMANDS).not.toContain('test');
+  expect((await run(['test'])).err).toStartWith('node-ctl: unknown command: test\n');
 });
 
 test('global options come before the command; the same words after it belong to the command', () => {

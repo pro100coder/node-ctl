@@ -44,7 +44,6 @@ exports[`the usage and every page read as recorded 1`] = `
   destroy <name> [--yes]       delete VPS, snapshot and volume (asks for confirmation); on Contabo
                                it cancels the contract, which Contabo bills to the end of the period
   apply [name ...]             terraform apply for the whole inventory, then the agent setup to name (every running one)
-  test                         run the whole test suite
   version
 Progress goes to stderr as actions (--progress: auto is tty on a terminal, plain in a pipe or CI;
 json is the raw event stream), results to stdout. Every run is appended to node-ctl.log.
@@ -376,14 +375,6 @@ Examples:
   ./node-ctl stop dev1
   ./node-ctl stop dev1 dev2
   ./node-ctl stop --all       every running machine
-"
-`;
-
-exports[`the usage and every page read as recorded: test 1`] = `
-"usage: ./node-ctl test
-
-The whole test suite: shellcheck, bats, terraform test for both roots, then npm ci and npm run
-check in progress/.
 "
 `;
 

@@ -43,7 +43,6 @@ export const USAGE = `usage: ./node-ctl [--progress=auto|tty|plain|json] <comman
   destroy <name> [--yes]       delete VPS, snapshot and volume (asks for confirmation); on Contabo
                                it cancels the contract, which Contabo bills to the end of the period
   apply [name ...]             terraform apply for the whole inventory, then the agent setup to name (every running one)
-  test                         run the whole test suite
   version
 Progress goes to stderr as actions (--progress: auto is tty on a terminal, plain in a pipe or CI;
 json is the raw event stream), results to stdout. Every run is appended to node-ctl.log.
@@ -315,11 +314,6 @@ whose apply was cut short. Terraform always applies the whole inventory.
 Examples:
   ./node-ctl apply
   ./node-ctl apply dev1
-`,
-  test: `usage: ./node-ctl test
-
-The whole test suite: shellcheck, bats, terraform test for both roots, then npm ci and npm run
-check in progress/.
 `,
   version: `usage: ./node-ctl version
 

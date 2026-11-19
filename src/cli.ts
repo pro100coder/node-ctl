@@ -53,7 +53,7 @@ export type Handler = (ctx: Context) => Promise<number | void> | number | void;
 // The dispatch table, in the order of the bash dispatch line; test/cli.test.ts holds every entry to a help page.
 export const COMMANDS = [
   'create', 'stop', 'start', 'resize', 'volume', 'destroy', 'list', 'load', 'ports', 'expose', 'backup', 'archive',
-  'restore', 'ssh', 'gitkey', 'hostkeys', 'autostop', 'cato', 'apply', 'test', 'check', 'init', 'accounts', 'version',
+  'restore', 'ssh', 'gitkey', 'hostkeys', 'autostop', 'cato', 'apply', 'check', 'init', 'accounts', 'version',
 ];
 
 const version: Handler = ({ io }) => {
