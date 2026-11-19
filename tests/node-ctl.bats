@@ -62,6 +62,7 @@ line_of() { grep -n -F -- "$1" "$STUB_LOG" | tail -1 | cut -d: -f1; }
 ev() { jq -cr "$1" "$STUB_EVENTS"; } # the JSON events of the run (NODE_CTL_EVENTS for the binary, the node stub's capture for bash)
 id_of() { ev "select(.event_type == \"started\" and .action_name == \"$1\") | .action_id" | head -1; }
 said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]; } # in what it printed or in what an action reported
+bash_cli() { [ "$RAE" = "$NODE_CTL_BIN" ]; } # the bash ./node-ctl, whose renderer is a node process: what only it does is asserted for it alone
 
 @test "create writes the inventory entry with defaults, applies and waits" {
   run "$RAE" create dev1
@@ -1387,9 +1388,12 @@ types() {
   [ "$output" = "all good" ]
   [ -z "$(ev 'select(.event_type == "failed")')" ]
   completed=$(ev 'select(.event_type == "completed") | .action_name')
-  for name in Host terraform jq yq curl node ssh restic "$NODE_CTL_CONFIG" accounts tailscale.client_id "Hetzner token (main)" "restic repository" Credentials "Tailscale on this host" Tailnet; do
-    grep -qxF "$name" <<< "$completed"
+  for name in Host terraform ssh restic "$NODE_CTL_CONFIG" accounts tailscale.client_id "Hetzner token (main)" "restic repository" Credentials "Tailscale on this host" Tailnet; do
+    grep -qxF "$name" <<< "$completed" || false
   done
+  if ! bash_cli; then # the binary reads YAML, edits JSON and calls the APIs itself: none of these is needed on the host
+    for name in jq yq curl node; do ! grep -qxF "$name" <<< "$completed" || false; done
+  fi
   [ "$(ev 'select(.event_type == "log" and .action_name == "accounts") | .message')" = hetzner/main ] # the accounts, by provider and tag
   [ "$(ev 'select(.event_type == "planned") | [.index, .total_steps] | @csv' | paste -s -d ' ' -)" = "1,4 2,4 3,4 4,4" ]
   grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer t$" "$STUB_LOG"
@@ -1536,8 +1540,17 @@ contabo  cb       1" ]
   [ "$status" -eq 0 ]
   # The step opens the renderer, the first question closes it, the check that follows opens it again:
   # one long-lived renderer (what it was before) would leave exactly one.
-  [ "$(grep -c '^node: ' "$STUB_LOG")" -ge 2 ]
+  if bash_cli; then [ "$(grep -c '^node: ' "$STUB_LOG")" -ge 2 ]; fi
   [ "$(ev 'select(.event_type == "completed" and .action_name == "Hetzner token (main)")' | wc -l)" -eq 1 ] # and no event is lost across the restart
+  if ! bash_cli; then # what that is for, as plain lines: the step, then the question, then the check, none inside another
+    answers main tok3 ""
+    NODE_CTL_PROGRESS=plain run "$RAE" init hetzner < "$BATS_TEST_TMPDIR/answers"
+    [ "$status" -eq 0 ]
+    n() { grep -n -F -- "$1" <<< "$output" | head -1 | cut -d: -f1; }
+    [ "$(n 'START hetzner')" -lt "$(n 'Hetzner account: a short tag')" ]
+    [ "$(n 'Hetzner account: a short tag')" -lt "$(n 'START Hetzner token (main)')" ]
+    grep -qx 'Hetzner account: a short tag.*' <<< "$output" # a line of its own
+  fi
 }
 
 @test "accounts edit replaces the credentials of a tag that already works" {
@@ -1629,18 +1642,22 @@ contabo  cb       1" ]
   ! grep -q "terraform" "$STUB_LOG" || false # nothing is applied while a credential is still broken
 }
 
-@test "check.sh rejects a Tailscale auth key passed as an OAuth client" {
-  TAILSCALE_OAUTH_CLIENT_ID=tskey-auth-k1 TAILSCALE_OAUTH_CLIENT_SECRET=tskey-auth-k1 run scripts/check.sh tailscale
+@test "check rejects a Tailscale auth key passed as an OAuth client" {
+  config '.tailscale.client_id = "tskey-auth-k1" | .tailscale.client_secret = "tskey-auth-k1"'
+  run "$RAE" check
   [ "$status" -eq 1 ]
-  [[ $output == *'"action_name":"Tailscale OAuth client"'*'"event_type":"failed","message":"the client id is a tskey-* key'* ]] || false
+  [[ $(ev 'select(.event_type == "failed" and .action_name == "Tailscale OAuth client") | .message') == "the client id is a tskey-* key"* ]] || false
   ! grep -q "api.tailscale.com" "$STUB_LOG" || false
-  TAILSCALE_OAUTH_CLIENT_ID=k1 TAILSCALE_OAUTH_CLIENT_SECRET=tskey-auth-k1 run scripts/check.sh tailscale
+  config '.tailscale.client_id = "k1" | .tailscale.client_secret = "tskey-auth-k1"'
+  : > "$STUB_EVENTS"
+  run "$RAE" check
   [ "$status" -eq 1 ]
-  [[ $output == *"the secret must start with tskey-client-"* ]] || false
+  [[ $(ev 'select(.event_type == "failed" and .action_name == "Tailscale OAuth client") | .message') == "the secret must start with tskey-client-"* ]] || false
 }
 
-@test "check.sh runs a single group when asked" {
-  TAILSCALE_OAUTH_CLIENT_ID=k1 TAILSCALE_OAUTH_CLIENT_SECRET=tskey-client-s run scripts/check.sh tailscale
+@test "init tailscale verifies the Tailscale client only" {
+  answers k1 tskey-client-s
+  run "$RAE" init tailscale < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
   grep -q "api.tailscale.com" "$STUB_LOG"
   grep -q 'http: POST .*tailnet/-/keys auth=Bearer at body={"capabilities":{"devices":{"create":{"tags":\["tag:dev"\]' "$STUB_LOG" # the key Terraform mints
@@ -1911,8 +1928,10 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [ -f "$GIT_KEY_FILE" ]
   # the renderer is drained and gone while ssh-keygen owns the terminal, and restarted afterwards,
   # so its passphrase prompt cannot land in the middle of the step's own lines
-  [ "$(grep -c 'node: progress/src/cli.ts' "$STUB_LOG")" -gt 1 ]
-  [ "$(line_of 'ssh-keygen:')" -lt "$(line_of 'node: progress/src/cli.ts')" ]
+  if bash_cli; then
+    [ "$(grep -c 'node: progress/src/cli.ts' "$STUB_LOG")" -gt 1 ]
+    [ "$(line_of 'ssh-keygen:')" -lt "$(line_of 'node: progress/src/cli.ts')" ]
+  fi
   [[ $(ev 'select(.action_name == "gitkey" and .event_type == "log") | .message') == *"ssh-ed25519 AAAAgit node-ctl-user commit key"* ]] || false
   : > "$STUB_LOG"; : > "$STUB_EVENTS"
   run "$RAE" init gitkey
@@ -2051,20 +2070,26 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 }
 
 @test "--progress selects the renderer, auto is plain off a terminal, and rejects other values" {
-  "$RAE" create dev1
-  grep -q "node: progress/src/cli.ts --progress=plain" "$STUB_LOG"
+  NODE_CTL_PROGRESS=auto run "$RAE" check
+  [ "$status" -eq 0 ]
+  if bash_cli; then grep -q "node: progress/src/cli.ts --progress=plain" "$STUB_LOG"; else [[ $output == *"[1/4 host] START Host"* ]] || false; fi
+  : > "$STUB_LOG"; : > "$STUB_EVENTS"
+  run "$RAE" --progress=json check
+  [ "$status" -eq 0 ]
+  [ "$(ev 'select(.event_type == "started") | .action_name' | head -1)" = Host ]
+  if bash_cli; then grep -q "node: progress/src/cli.ts --progress=json" "$STUB_LOG"; else [[ $output != *"START Host"* ]] || false; fi
   : > "$STUB_LOG"
-  "$RAE" --progress=json stop dev1
-  grep -q "node: progress/src/cli.ts --progress=json" "$STUB_LOG"
-  : > "$STUB_LOG"
-  NODE_CTL_PROGRESS=tty "$RAE" start dev1
-  grep -q "node: progress/src/cli.ts --progress=tty" "$STUB_LOG"
+  NODE_CTL_PROGRESS=tty run "$RAE" check
+  [ "$status" -eq 0 ]
+  if bash_cli; then grep -q "node: progress/src/cli.ts --progress=tty" "$STUB_LOG"; else [[ $output == *"✓ [1/4] Host"* && $output != *"START Host"* ]] || false; fi
   run "$RAE" --progress=fancy list
   [ "$status" -eq 1 ]
   [[ $output == *"--progress must be"* ]] || false
-  : > "$STUB_LOG"
-  "$RAE" list >/dev/null
-  ! grep -q "src/cli.ts" "$STUB_LOG" || false # no actions, no renderer
+  : > "$STUB_LOG"; : > "$STUB_EVENTS"
+  run bash -c "'$RAE' list 2>&1 >/dev/null"
+  [ -z "$output" ] # no actions, no renderer
+  [ ! -s "$STUB_EVENTS" ]
+  ! grep -q "src/cli.ts" "$STUB_LOG" || false
 }
 
 @test "Ctrl+C turns the open actions into cancelled and exits 130" {
@@ -2103,17 +2128,31 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 }
 
 @test "the renderer draws past the log and writes the log its own stamped lines, on a terminal and in a pipe" {
-  "$RAE" create dev1; : > "$STUB_LOG"; : > "$NODE_CTL_LOG"
-  out=$(STUB_NODE_DRAW=LIVE-REGION script -q /dev/null "$RAE" ports dev1 22 </dev/null)
-  [[ $out == *LIVE-REGION* ]] || false
-  grep -q -F -- "node: progress/src/cli.ts --progress=tty --log=$NODE_CTL_LOG" "$STUB_LOG"
-  grep -q '=== node-ctl ports dev1 22' "$NODE_CTL_LOG"
-  ! grep -q LIVE-REGION "$NODE_CTL_LOG" || false
-  : > "$STUB_LOG"
-  STUB_NODE_DRAW=PLAIN-LINES run "$RAE" ports dev1 22 # an autostop job or a script: plain lines on stderr, a log with times
-  [[ $output == *PLAIN-LINES* ]] || false
-  grep -q -F -- "node: progress/src/cli.ts --progress=plain --log=$NODE_CTL_LOG" "$STUB_LOG"
-  ! grep -q PLAIN-LINES "$NODE_CTL_LOG" || false
+  stamped='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8} \[1/4 host\] START Host$'
+  if bash_cli; then
+    out=$(NODE_CTL_PROGRESS=auto STUB_NODE_DRAW=LIVE-REGION script -q /dev/null "$RAE" check </dev/null)
+    [[ $out == *LIVE-REGION* ]] || false
+    grep -q -F -- "node: progress/src/cli.ts --progress=tty --log=$NODE_CTL_LOG" "$STUB_LOG"
+    ! grep -q LIVE-REGION "$NODE_CTL_LOG" || false
+  else
+    out=$(NODE_CTL_PROGRESS=auto script -q /dev/null "$RAE" check </dev/null)
+    [[ $out == *$'\e['*"Host"* && $out != *"START Host"* ]] || false # a live region on the terminal
+    grep -qE "$stamped" "$NODE_CTL_LOG" # the log gets plain lines with their time
+    ! grep -q $'\e' "$NODE_CTL_LOG" || false # and none of the drawing
+  fi
+  grep -q '=== node-ctl check' "$NODE_CTL_LOG"
+  : > "$STUB_LOG"; : > "$NODE_CTL_LOG"
+  if bash_cli; then
+    NODE_CTL_PROGRESS=auto STUB_NODE_DRAW=PLAIN-LINES run "$RAE" check # an autostop job or a script: plain lines on stderr, a log with times
+    [[ $output == *PLAIN-LINES* ]] || false
+    grep -q -F -- "node: progress/src/cli.ts --progress=plain --log=$NODE_CTL_LOG" "$STUB_LOG"
+    ! grep -q PLAIN-LINES "$NODE_CTL_LOG" || false
+  else
+    NODE_CTL_PROGRESS=auto run "$RAE" check
+    [[ $output == *"[1/4 host] START Host"* ]] || false
+    ! grep -qE '^[0-9-]+ [0-9:]+ ' <<< "$output" || false # stderr has no times
+    grep -qE "$stamped" "$NODE_CTL_LOG"
+  fi
 }
 
 @test "a log past 10 MB becomes node-ctl.log.1, replacing the previous one, and the run starts a new log" {
@@ -2165,23 +2204,45 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [ "$(inv dev1 .state)" = running ]
 }
 
-@test "init links node-ctl into BIN_DIR, the skill into SKILLS_DIR, and leaves a foreign file alone" {
+@test "init links the node-ctl-migrate skill into SKILLS_DIR, and leaves a foreign file alone" {
   blank
   answers "" tok "" ""
   run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [ "$(readlink "$BIN_DIR/node-ctl")" = "$(cd "$(dirname "$RAE")" && pwd)/node-ctl" ]
-  [ "$(readlink "$SKILLS_DIR/node-ctl-migrate")" = "$(cd "$(dirname "$RAE")" && pwd)/skills/node-ctl-migrate" ]
+  [ -L "$SKILLS_DIR/node-ctl-migrate" ]
   grep -q "^disable-model-invocation: true" "$SKILLS_DIR/node-ctl-migrate/SKILL.md" # only ever invoked by hand
-  run "$BIN_DIR/node-ctl" list
-  [ "$status" -eq 0 ]
-  rm "$BIN_DIR/node-ctl"; echo other > "$BIN_DIR/node-ctl"
+  if bash_cli; then # the bash CLI also links itself onto PATH; the binary is put there by install.sh
+    [ "$(readlink "$BIN_DIR/node-ctl")" = "$(cd "$(dirname "$RAE")" && pwd)/node-ctl" ]
+    [ "$(readlink "$SKILLS_DIR/node-ctl-migrate")" = "$(cd "$(dirname "$RAE")" && pwd)/skills/node-ctl-migrate" ]
+    run "$BIN_DIR/node-ctl" list
+    [ "$status" -eq 0 ]
+    rm "$BIN_DIR/node-ctl"; echo other > "$BIN_DIR/node-ctl"
+    answers ""
+    run "$RAE" init link < "$BATS_TEST_TMPDIR/answers"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BIN_DIR/node-ctl")" = other ]
+    [ -L "$SKILLS_DIR/node-ctl-migrate" ] # the other link is still made
+    [[ $(ev 'select(.event_type == "warning") | .message') == *"is not a symlink; left alone"* ]] || false
+    : > "$STUB_EVENTS"
+  fi
+  rm "$SKILLS_DIR/node-ctl-migrate"; echo other > "$SKILLS_DIR/node-ctl-migrate"
   answers ""
   run "$RAE" init link < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [ "$(cat "$BIN_DIR/node-ctl")" = other ]
-  [ -L "$SKILLS_DIR/node-ctl-migrate" ] # the other link is still made
-  [[ $(ev 'select(.event_type == "warning") | .message') == *"is not a symlink; left alone"* ]] || false
+  [ "$(cat "$SKILLS_DIR/node-ctl-migrate")" = other ]
+  [[ $(ev 'select(.event_type == "warning") | .message') == *"node-ctl-migrate exists and is not a symlink; left alone"* ]] || false
+}
+
+@test "init unpacks the skill into NODE_CTL_HOME, links it there, and links no node-ctl into BIN_DIR" {
+  ! bash_cli || skip "the bash CLI links the skill of its checkout, and itself"
+  blank
+  answers "" tok "" ""
+  run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$SKILLS_DIR/node-ctl-migrate")" = "$NODE_CTL_HOME/skills/node-ctl-migrate" ]
+  cmp "$NODE_CTL_HOME/skills/node-ctl-migrate/SKILL.md" "$BATS_TEST_DIRNAME/../skills/node-ctl-migrate/SKILL.md"
+  [ ! -e "$BIN_DIR/node-ctl" ]
+  [ ! -L "$BIN_DIR/node-ctl" ]
 }
 
 @test "a node-ctl edited while a command runs is not read past its dispatch" {
