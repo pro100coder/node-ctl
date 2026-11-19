@@ -49,7 +49,8 @@ jobs:
           bats --version; shellcheck --version | sed -n 2p; jq --version; yq --version; bash --version | head -1
       - run: bun install --frozen-lockfile
       - run: bun run check
-      - run: bats tests
+      # /bin first: on macOS that is bash 3.2, the bash users run the suite's rules against, not the runner's Homebrew bash
+      - run: PATH="/bin:$PATH" bash --version | head -1 && PATH="/bin:$PATH" bats tests
       - name: terraform test
         run: |
           for root in terraform terraform/contabo; do
@@ -96,7 +97,10 @@ jobs:
           NODE_CTL_VERSION: ${{ steps.version.outputs.version }}
         run: |
           for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
-            NODE_CTL_TARGET=bun-$t NODE_CTL_OUTFILE=dist/node-ctl-$t bun run build
+            target=bun-$t
+            # baseline needs no AVX2, which not every VPS CPU offers
+            [ "$t" = linux-x64 ] && target=bun-linux-x64-baseline
+            NODE_CTL_TARGET=$target NODE_CTL_OUTFILE=dist/node-ctl-$t bun run build
           done
           (cd dist && sha256sum node-ctl-* > checksums.txt && cat checksums.txt)
       - name: Check the binaries
