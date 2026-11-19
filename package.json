@@ -7,7 +7,8 @@
     "test": "bun test ./test",
     "typecheck": "tsc --noEmit",
     "knip": "knip",
-    "check": "bun run test && bun run typecheck && bun run knip"
+    "check": "bun run test && bun run typecheck && bun run knip",
+    "build": "bun build --compile --minify --no-compile-autoload-dotenv --no-compile-autoload-bunfig --define NODE_CTL_VERSION=\"\\\"${NODE_CTL_VERSION:-dev}\\\"\" --define NODE_CTL_SHA=\"\\\"$(git rev-parse --short HEAD)\\\"\" src/cli.ts --outfile ${NODE_CTL_OUTFILE:-dist/node-ctl} && rm -f .*.bun-build"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
