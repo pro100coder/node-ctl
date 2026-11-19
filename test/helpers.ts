@@ -1,3 +1,6 @@
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ActionEvent, EventType, Out } from '../src/progress/types.ts';
 
 export class Sink implements Out {
@@ -38,4 +41,14 @@ let seq = 0;
 export function ev(action_id: string, action_name: string, event_type: EventType, extra: Partial<ActionEvent> = {}): ActionEvent {
   const key = action_name.toLowerCase().split(/[^a-z0-9]+/)[0]!;
   return { seq: ++seq, action_id, parent_action_id: null, action_name, key, event_type, timestamp: new Date().toISOString(), ...extra };
+}
+
+// A directory with fake binaries for a child's PATH, plus the system's own (sh, cat); each fake is a sh script.
+export function fakeBins(bins: Record<string, string>): { dir: string; PATH: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'node-ctl-bin-'));
+  for (const [name, body] of Object.entries(bins)) {
+    writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(dir, name), 0o755);
+  }
+  return { dir, PATH: `${dir}:/usr/bin:/bin` };
 }
