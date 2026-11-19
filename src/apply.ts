@@ -33,7 +33,7 @@ async function step(progress: Progress, name: string, key: string, run: () => Pr
 // Terraform does not hold yet gets its instance on its own first, then its firewall in the full apply
 // once Contabo reports the instance up; machines that have one cost nothing extra.
 async function contaboInstancesFirst(config: Config, at: Where, progress: Progress, env: Env, tag: string): Promise<void> {
-  const tf = { config, home: at.home, progress, env };
+  const tf = { config, home: at.home, servers: at.servers, progress, env };
   const state = await tfAccount({ ...tf, capture: true }, tag, ['state', 'list']);
   const have = new Set(state.status === 0 ? state.stdout.split('\n') : []);
   const waits = machineNames(at.servers).filter((name) => {
@@ -60,7 +60,7 @@ async function contaboInstancesFirst(config: Config, at: Where, progress: Progre
 
 // do_apply: what the Apply Terraform step runs; resize runs it alone, to undo its edit when it fails.
 export async function doApply(config: Config, at: Where, progress: Progress, env: Env): Promise<void> {
-  const tf = { config, home: at.home, progress, env };
+  const tf = { config, home: at.home, servers: at.servers, progress, env };
   await step(progress, 'terraform init', 'init', () => tfInit(tf, 'hetzner'));
   if (Object.keys(config.contabo).length) await step(progress, 'terraform init (contabo)', 'init', () => tfInit(tf, 'contabo'));
   for (const tag of accounts(config)) {

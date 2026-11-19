@@ -92,12 +92,12 @@ test.skipIf(process.platform !== 'darwin')('the launchd job is a valid plist', a
   expect(lint.stdout.toString()).toBe(`${h.plist}: OK\n`);
 });
 
-test('the launchd job runs this binary by its absolute path with its NODE_CTL_HOME, and needs no jq', async () => {
+test('the launchd job runs this binary by its absolute path with the home, config and inventory it was scheduled with, and needs no jq', async () => {
   const h = home();
   expect((await h.run(['autostop', 'dev1', '2099-06-01 18:30'])).code).toBe(0);
   const job = readFileSync(h.plist, 'utf8');
   expect(job).toContain(`[ "$(date +%s)" -ge ${Date.UTC(2099, 5, 1, 16, 30) / 1000} ] || exit 0`);
-  expect(job).toContain(`NODE_CTL_HOME='${h.dir}' NODE_CTL_SCHEDULED=1 '/opt/node ctl/bin' --progress=plain stop 'dev1' || exit 1`);
+  expect(job).toContain(`NODE_CTL_HOME='${h.dir}' NODE_CTL_CONFIG='${h.dir}/node-ctl.yaml' SERVERS_DIR='${h.dir}/servers' NODE_CTL_SCHEDULED=1 '/opt/node ctl/bin' --progress=plain stop 'dev1' || exit 1`);
   expect(job).not.toContain('jq');
   expect(h.calls()).toContain(`launchctl bootstrap gui/${process.getuid!()} ${h.plist}`);
 });
@@ -120,7 +120,7 @@ test('on Linux the stop is a transient user timer at that moment in UTC, run by 
   expect(timer).toBe(
     'systemd-run --user --quiet --collect --unit=node-ctl-stop-dev1 --on-calendar=2099-06-01 16:30:00 UTC ' +
       '--description=node-ctl stop dev1 at 2099-06-01 16:30:00 UTC --property=Restart=on-failure --property=RestartSec=60 ' +
-      `--setenv=NODE_CTL_HOME=${h.dir} --setenv=NODE_CTL_SCHEDULED=1 /opt/node ctl/bin --progress=plain stop dev1`,
+      `--setenv=NODE_CTL_HOME=${h.dir} --setenv=NODE_CTL_CONFIG=${h.dir}/node-ctl.yaml --setenv=SERVERS_DIR=${h.dir}/servers --setenv=NODE_CTL_SCHEDULED=1 /opt/node ctl/bin --progress=plain stop dev1`,
   );
   // the earlier timer goes first: one per machine
   expect(lines.findIndex((l) => l === 'systemctl --user stop node-ctl-stop-dev1.timer node-ctl-stop-dev1.service')).toBeLessThan(lines.indexOf(lines.find((l) => l.startsWith('systemd-run '))!));

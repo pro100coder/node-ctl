@@ -1871,7 +1871,7 @@ contabo  cb       1" ]
   "$RAE" start dev2; : > "$STUB_LOG"
   run "$RAE" apply dev2 # named: only those, and the row says which
   [ "$status" -eq 0 ]
-  grep -q 'node-ctl-user@dev2' "$STUB_LOG" && ! grep -q 'node-ctl-user@dev1' "$STUB_LOG"
+  grep -q 'node-ctl-user@dev2' "$STUB_LOG" && ! grep -q 'node-ctl-user@dev1' "$STUB_LOG" || false
   ev 'select(.event_type == "completed") | .action_name' | grep -qx 'Sync the agent setup to dev2'
   "$RAE" stop dev2; : > "$STUB_LOG"
   run "$RAE" apply dev2 # a stopped or unknown name is refused before Terraform runs
@@ -2706,4 +2706,13 @@ installed_copy() { # a copy of the binary under test, which update may replace
   cmp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/before"
   [ "$(ls -A "$BATS_TEST_TMPDIR/bin")" = node-ctl ]
   grep -q "http: GET https://github.com/pro100coder/node-ctl/releases/download/v0.261120.1/checksums.txt" "$STUB_LOG"
+}
+
+@test "apply hands Terraform the Tailscale OAuth client and the inventory in use, in the account's run only" {
+  "$RAE" create dev1
+  : > "$STUB_LOG"
+  run "$RAE" apply
+  [ "$status" -eq 0 ]
+  grep -qx "tfenv: tailscale i/tskey-client-s servers $SERVERS_DIR" "$STUB_LOG" || false
+  [ "$(grep -c '^tfenv:' "$STUB_LOG")" -eq "$(grep -c '^terraform: .*(workspace ' "$STUB_LOG")" ]
 }

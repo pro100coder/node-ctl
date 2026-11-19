@@ -74,3 +74,26 @@ test('a failed automatic init is the answer: the command it was for does not run
   expect(r.status).toBe(1);
   expect(readFileSync(join(home, 'calls'), 'utf8')).not.toContain('apply');
 });
+
+// The tailscale provider of both roots reads its OAuth client from the environment (versions.tf), and
+// main.tf finds the machines in var.servers_dir: without either, an apply fails or plans every server away.
+test('every account run gets the Tailscale OAuth client and the servers dir in use, and init gets neither', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'node-ctl-home-'));
+  const calls = join(home, 'calls');
+  const bins = fakeBins({
+    terraform: `echo "$1 $2 | ts=\${TAILSCALE_OAUTH_CLIENT_ID-}/\${TAILSCALE_OAUTH_CLIENT_SECRET-} dir=\${TF_VAR_servers_dir-}" >> ${calls}`,
+  });
+  writeFileSync(join(home, 'node-ctl.yaml'), 'hetzner: {main: t1}\ncontabo: {cb: {client_id: ci, client_secret: cs, user: u@e, password: pw}}\ntailscale: {client_id: tsid, client_secret: tssecret}\n');
+  const config = loadConfig(join(home, 'node-ctl.yaml'), { HOME: home });
+  const tf = { config, home, servers: join(home, 'elsewhere'), progress: new Progress(() => [], new Sink()), env: { PATH: bins.PATH } };
+  await tfInit(tf, 'hetzner');
+  await tfAccount(tf, 'main', ['apply']);
+  await tfAccount(tf, 'cb', ['apply']);
+  const lines = readFileSync(calls, 'utf8').trim().split('\n').map((l) => l.replace(/^-chdir=\S+ /, ''));
+  expect(lines).toEqual([
+    'init | ts=/ dir=',
+    `apply | ts=tsid/tssecret dir=${join(home, 'elsewhere')}`,
+    'init | ts=/ dir=', // the contabo root is initialised before its first run
+    `apply | ts=tsid/tssecret dir=${join(home, 'elsewhere')}`,
+  ]);
+});

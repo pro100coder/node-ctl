@@ -86,11 +86,13 @@ function utc(at: number): string {
 
 // launchd runs a job missed while the Mac slept on wake, and RunAtLoad at the next login; the job compares
 // the clock itself, so neither stops the machine early. A failed stop exits 1 and is retried a minute later.
+// The job carries the config and inventory it was scheduled with: under another one it would find no such
+// machine, take it for destroyed and remove itself while the machine keeps running.
 function plist(run: Run, name: string, at: number): string {
   const file = plistOf(run, name);
   const script = [
     `[ "$(date +%s)" -ge ${at} ] || exit 0`,
-    `NODE_CTL_HOME=${q(run.p.home)} NODE_CTL_SCHEDULED=1 ${self(run.env).map(q).join(' ')} --progress=plain stop ${q(name)} || exit 1`,
+    `NODE_CTL_HOME=${q(run.p.home)} NODE_CTL_CONFIG=${q(run.p.config)} SERVERS_DIR=${q(run.p.servers)} NODE_CTL_SCHEDULED=1 ${self(run.env).map(q).join(' ')} --progress=plain stop ${q(name)} || exit 1`,
     `rm -f ${q(file)}; launchctl bootout ${domain()}/${label(name)}`,
   ].join('\n');
   const log = xml(join(run.env.HOME || homedir(), 'Library', 'Logs', `node-ctl-stop-${name}.log`));
@@ -122,7 +124,7 @@ function timer(run: Run, name: string, at: number): string[] {
     'systemd-run', '--user', '--quiet', '--collect', `--unit=${unit(name)}`, `--on-calendar=${when}`,
     `--description=node-ctl stop ${name} at ${when}`,
     '--property=Restart=on-failure', '--property=RestartSec=60',
-    `--setenv=NODE_CTL_HOME=${run.p.home}`, '--setenv=NODE_CTL_SCHEDULED=1', `--setenv=PATH=${run.env.PATH ?? ''}`,
+    `--setenv=NODE_CTL_HOME=${run.p.home}`, `--setenv=NODE_CTL_CONFIG=${run.p.config}`, `--setenv=SERVERS_DIR=${run.p.servers}`, '--setenv=NODE_CTL_SCHEDULED=1', `--setenv=PATH=${run.env.PATH ?? ''}`,
     ...self(run.env), '--progress=plain', 'stop', name,
   ];
 }

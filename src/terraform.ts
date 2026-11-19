@@ -5,7 +5,7 @@
 // means new lock files or modules, so a root is initialised again before its next command.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { account, credentials, type Config } from './config.ts';
+import { account, credentials, tailscaleEnv, type Config } from './config.ts';
 import type { Progress } from './progress/progress.ts';
 import { actionRun, spawn } from './proc.ts';
 import { unpack } from './resources.ts';
@@ -15,6 +15,7 @@ type Provider = 'hetzner' | 'contabo';
 interface Tf {
   config: Config;
   home: string; // NODE_CTL_HOME
+  servers?: string; // the inventory in use (SERVERS_DIR): main.tf reads var.servers_dir, its own ../servers otherwise
   progress: Progress;
   capture?: boolean; // the output is the result (output -json, state list): no log events, as 2>/dev/null
   env?: Record<string, string | undefined>; // what the children inherit; this process's environment by default
@@ -64,5 +65,7 @@ export async function tfAccount(tf: Tf, tag: string, args: string[]) {
     const init = await tfInit(tf, provider);
     if (init.status !== 0) return init;
   }
-  return run(tf, dir, args, { TF_WORKSPACE: tag, TF_VAR_account: tag, ...credentials(tf.config, tag) });
+  // The tailscale provider of both roots reads its OAuth client from the environment, as bash exported it.
+  const servers: Record<string, string> = tf.servers ? { TF_VAR_servers_dir: tf.servers } : {};
+  return run(tf, dir, args, { TF_WORKSPACE: tag, TF_VAR_account: tag, ...tailscaleEnv(tf.config), ...servers, ...credentials(tf.config, tag) });
 }
