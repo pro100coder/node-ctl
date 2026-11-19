@@ -76,8 +76,8 @@ test('--progress and NODE_CTL_PROGRESS are validated before any command runs', a
 
 test('a command not ported yet fails clearly and touches nothing', async () => {
   const home = mkdtempSync(join(tmpdir(), 'node-ctl-home-'));
-  const r = await run(['stop', 'dev1'], { NODE_CTL_HOME: home, NODE_CTL_PROGRESS: 'json', NODE_CTL_EVENTS: join(home, 'events.jsonl') });
-  expect(r).toEqual({ code: 1, out: '', err: 'node-ctl: stop is not implemented yet\n' });
+  const r = await run(['autostop', 'dev1', 'off'], { NODE_CTL_HOME: home, NODE_CTL_PROGRESS: 'json', NODE_CTL_EVENTS: join(home, 'events.jsonl') });
+  expect(r).toEqual({ code: 1, out: '', err: 'node-ctl: autostop is not implemented yet\n' });
   expect(existsSync(join(home, 'events.jsonl'))).toBe(false);
 });
 

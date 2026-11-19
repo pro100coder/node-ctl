@@ -99,6 +99,12 @@ async function catoLogin(run: Run, name: string): Promise<string | undefined> {
   return signed ? undefined : failure;
 }
 
+// A start signs the machine in again; a failure is a warning, the start stands, and cato <name> retries.
+export async function catoAfterStart(run: Run, name: string): Promise<void> {
+  const failed = await catoLogin(run, name);
+  if (failed !== undefined) run.progress.warn(`${failed || `Cato is not connected on ${name}`}; retry: ./node-ctl cato ${name}`);
+}
+
 export const cato = async (ctx: Ctx): Promise<number | void> => {
   const run = setup(ctx);
   const args = await target(ctx, run.p.servers, 'cato', ['running']);

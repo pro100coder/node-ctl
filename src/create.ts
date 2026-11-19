@@ -14,6 +14,7 @@ import { writeMachine } from './inventory.ts';
 import { askVolumeSize, portList } from './machine.ts';
 import { waitReady } from './ready.ts';
 import { pickType } from './resize.ts';
+import { start } from './stop.ts';
 import * as tailscale from './tailscale.ts';
 import { menu, menuList, read, type Ui } from './ui.ts';
 
@@ -78,7 +79,7 @@ async function askTariff(run: Run, ui: Ui, tag: string, provider: string, locati
 }
 
 // tailscale-rm.sh: a stale node that squats the name would rename the new machine to <name>-1.
-function freeTailnetName(run: Run, name: string): Promise<boolean> {
+export function freeTailnetName(run: Run, name: string): Promise<boolean> {
   return call(run.progress, 'Free the tailnet name', 'api', () => tailscale.removeNode(run.env, run.config.tailscale, name));
 }
 
@@ -103,8 +104,7 @@ export const create = async (ctx: Ctx): Promise<number | void> => {
     if (args.length) {
       throw new UserError(`${name} exists; options only apply to a new machine (edit ${file} and ./node-ctl apply, or ./node-ctl destroy ${name} first)`);
     }
-    // a machine that exists is started, whatever its provider does for that
-    throw new UserError('start is not implemented yet'); // T05c: the start command goes here
+    return start({ ...ctx, args: [name] }); // a machine that exists is started, whatever its provider does for that
   }
   const o = { account: '', type: '', location: '', size: '', ports: '' };
   while (args.length) {

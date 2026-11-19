@@ -39,7 +39,7 @@ interface Choice {
 
 // The type a machine moves to (resize) or starts as (start --type): the one given, or asked; refused
 // with the reason when that type cannot take it.
-async function chooseType(run: Run, ui: Ui, name: string, verb: 'resize' | 'start', given: string): Promise<Choice> {
+export async function chooseType(run: Run, ui: Ui, name: string, verb: 'resize' | 'start', given: string): Promise<Choice> {
   const m = readMachine(run.p.servers, name);
   const [how, opt] = verb === 'start' ? ['start as', ' --type'] : ['move to', ''];
   const current = m.type ?? '';

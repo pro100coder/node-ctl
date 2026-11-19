@@ -1,12 +1,15 @@
 // The Hetzner Cloud API for what Terraform does not answer: the server types on offer, a machine's
-// disk, and powering a server on (scripts/server-types.sh, image.sh disk, poweron.sh). The token is
-// the machine's account's, handed to each call.
-import { request } from './http.ts';
+// disk, its disk snapshot, and powering a server on (scripts/server-types.sh, image.sh, poweron.sh).
+// The token is the machine's account's, handed to each call.
+import { request, sleep } from './http.ts';
 
 type Env = Record<string, string | undefined>;
 
 const get = (env: Env, token: string, path: string, init: RequestInit = {}) =>
-  request(env, 'hetzner', path, { ...init, headers: { Authorization: `Bearer ${token}` } }) as Promise<Record<string, unknown> | null>;
+  request(env, 'hetzner', path, { ...init, headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${token}` } }) as Promise<Record<
+    string,
+    unknown
+  > | null>;
 
 // One menu row: the type, what it has, what it costs a month, and the last column: the locations that
 // create one now (create), or yes|no, whether Hetzner puts this machine there now (move).
@@ -104,4 +107,69 @@ export async function powerOn(env: Env, token: string, name: string): Promise<vo
   const id = first((await get(env, token, `/v1/servers?name=${encodeURIComponent(name)}`))?.servers, 'id');
   if (id == null) throw new Error(`no server named ${name}`);
   await get(env, token, `/v1/servers/${String(id)}/actions/poweron`, { method: 'POST' });
+}
+
+// The root disk of a machine, kept as a Hetzner snapshot: it holds /data too, so it is the only copy of a
+// stopped machine and a rollback point of a running one (ADR-0016). Matched by description, the only mark
+// a snapshot gets, so none needs migrating or labelling.
+type Image = { id?: unknown; description?: unknown; status?: unknown };
+
+// shortcut: one page of snapshots; a project with 100+ of them needs pagination here.
+async function snapshots(env: Env, token: string, name: string): Promise<Image[]> {
+  const images = (await get(env, token, '/v1/images?type=snapshot&per_page=100'))?.images;
+  return (Array.isArray(images) ? (images as Image[]) : []).filter((i) => i.description === `node-ctl ${name}`);
+}
+
+const status = async (env: Env, token: string, path: string, key: string) => {
+  try {
+    return String(((await get(env, token, path))?.[key] as { status?: unknown } | undefined)?.status ?? '');
+  } catch {
+    return ''; // a dropped request is one more wait, not a failed stop
+  }
+};
+
+// image.sh create: the server powered off, its disk snapshotted; the image id once Hetzner says it is
+// available, and only then: the VPS deleted while its snapshot is still being written takes the
+// snapshot with it. say() narrates on the action's stderr.
+export async function createImage(env: Env, token: string, name: string, say: (line: string) => void): Promise<string> {
+  // A snapshot only ever starts being written here, and only with the server already off: one left in
+  // creating is a previous stop that ran out of patience, so it is waited for instead of paying twice.
+  let image = (await snapshots(env, token, name)).find((i) => i.status === 'creating')?.id;
+  if (image != null) say(`snapshot ${String(image)} of ${name} is still being written; waiting for it`);
+  else {
+    const id = first((await get(env, token, `/v1/servers?name=${encodeURIComponent(name)}`))?.servers, 'id');
+    if (id == null) throw new Error(`no server named ${name}`);
+    // ACPI shutdown first: a snapshot taken with dirty pages in flight is a filesystem to fsck at boot.
+    // The server is about to be deleted anyway, so a guest that ignores ACPI gets the plug pulled.
+    await get(env, token, `/v1/servers/${String(id)}/actions/shutdown`, { method: 'POST' });
+    let state = '';
+    for (let i = 0; i < 60; i++) {
+      state = await status(env, token, `/v1/servers/${String(id)}`, 'server');
+      if (state === 'off') break;
+      await sleep(5000, env);
+    }
+    if (state !== 'off') await get(env, token, `/v1/servers/${String(id)}/actions/poweroff`, { method: 'POST' });
+    const made = await get(env, token, `/v1/servers/${String(id)}/actions/create_image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'snapshot', description: `node-ctl ${name}` }),
+    });
+    image = (made?.image as Image | undefined)?.id;
+    if (image == null || image === '') throw new Error(`Hetzner returned no image for ${name}`);
+  }
+  // A full disk of some hundred GB takes its time; half an hour is what a stop is allowed to wait.
+  for (let i = 0; i < 360; i++) {
+    if ((await status(env, token, `/v1/images/${String(image)}`, 'image')) === 'available') return String(image);
+    await sleep(5000, env);
+  }
+  throw new Error(`image ${String(image)} of ${name} is still being written; ./node-ctl stop ${name} waits for it again`);
+}
+
+// image.sh prune: every snapshot of the machine but the one to keep; say() gets each deletion.
+export async function pruneImages(env: Env, token: string, name: string, keep: string, say: (line: string) => void): Promise<void> {
+  for (const i of await snapshots(env, token, name)) {
+    if (String(i.id) === keep) continue;
+    await get(env, token, `/v1/images/${String(i.id)}`, { method: 'DELETE' });
+    say(`deleted image ${String(i.id)}`);
+  }
 }

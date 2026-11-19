@@ -15,6 +15,7 @@ import { openLog, tee } from './log.ts';
 import { paths } from './paths.ts';
 import { cancel, whenCancelled } from './proc.ts';
 import { resize } from './resize.ts';
+import { destroy, start, stop } from './stop.ts';
 import { stdinInput, type Input, type Ui } from './ui.ts';
 import { Progress, renderersFor, resolveMode, type Mode } from './progress/progress.ts';
 import type { Out } from './progress/types.ts';
@@ -76,6 +77,9 @@ const ported = new Map<string, Handler>([
   ['gitkey', gitkey],
   ['hostkeys', hostkeys],
   ['cato', cato],
+  ['stop', stop],
+  ['start', start],
+  ['destroy', destroy],
 ]);
 
 // Only the options before the command are global: after it every word is the command's (ssh passes them on).
