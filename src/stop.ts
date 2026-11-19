@@ -233,7 +233,7 @@ export const start = async (ctx: Ctx): Promise<number | void> => {
     else if (a.startsWith('-')) throw new UserError(`unknown option: ${a}`);
     else names.push(a);
   }
-  if (till !== undefined) canSchedule(env);
+  if (till !== undefined) await canSchedule(env);
   if (all) {
     if (names.length) throw new UserError('--all takes no names');
     names.push(...machineNames(p.servers).filter((n) => readMachine(p.servers, n).state === 'stopped'));

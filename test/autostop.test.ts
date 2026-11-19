@@ -110,3 +110,53 @@ test('a scheduled stop of a machine stopped or destroyed since is done, not a fa
   expect(h.calls()).not.toContain('terraform');
   expect((await h.run(['stop', 'dev1'])).code).toBe(1); // by hand it still says so
 });
+
+test('on Linux the stop is a transient user timer at that moment in UTC, run by this binary with its home, retried a minute after a failure', async () => {
+  const h = home();
+  const r = await h.run(['autostop', 'dev1', '2099-06-01 18:30'], { NODE_CTL_PLATFORM: 'linux' });
+  expect(r.code).toBe(0);
+  const lines = h.calls().split('\n');
+  const timer = lines.find((l) => l.startsWith('systemd-run '))!.replace(/--setenv=PATH=\S+ /, '');
+  expect(timer).toBe(
+    'systemd-run --user --quiet --collect --unit=node-ctl-stop-dev1 --on-calendar=2099-06-01 16:30:00 UTC ' +
+      '--description=node-ctl stop dev1 at 2099-06-01 16:30:00 UTC --property=Restart=on-failure --property=RestartSec=60 ' +
+      `--setenv=NODE_CTL_HOME=${h.dir} --setenv=NODE_CTL_SCHEDULED=1 /opt/node ctl/bin --progress=plain stop dev1`,
+  );
+  // the earlier timer goes first: one per machine
+  expect(lines.findIndex((l) => l === 'systemctl --user stop node-ctl-stop-dev1.timer node-ctl-stop-dev1.service')).toBeLessThan(lines.indexOf(lines.find((l) => l.startsWith('systemd-run '))!));
+  expect(existsSync(h.plist)).toBe(false);
+});
+
+test('on Linux a stop is not scheduled without a user manager or without linger, and the refusal says how to fix it', async () => {
+  const user = userInfo().username;
+  const noManager = home({ systemctl: 'echo "Failed to connect to bus: No medium found" >&2; exit 1' });
+  const a = await noManager.run(['autostop', 'dev1', '2h'], { NODE_CTL_PLATFORM: 'linux' });
+  expect(a.code).toBe(1);
+  expect(a.err).toContain('node-ctl: --till needs a systemd user manager, and systemctl --user reaches none (Failed to connect to bus: No medium found)');
+  const noLinger = home({ loginctl: 'echo Linger=no' });
+  const b = await noLinger.run(['autostop', 'dev1', '2h'], { NODE_CTL_PLATFORM: 'linux' });
+  expect(b.code).toBe(1);
+  expect(b.err).toContain(`--till needs lingering for ${user}, or the timer dies with the session at logout; enable it once: sudo loginctl enable-linger ${user}`);
+  for (const h of [noManager, noLinger]) expect(h.calls()).not.toContain('systemd-run');
+  expect(noLinger.calls()).toContain(`loginctl show-user ${user} --property=Linger`);
+});
+
+test('a host that is neither macOS nor Linux has nothing to schedule with', async () => {
+  const r = await home().run(['autostop', 'dev1', '2h'], { NODE_CTL_PLATFORM: 'win32' });
+  expect(r.err).toBe('node-ctl: --till needs launchd (macOS) or a systemd user manager (Linux), and this is win32\n');
+});
+
+test('on Linux list reads when each timer stops its machine from the description the user manager lists', async () => {
+  const h = home({
+    systemctl: `case "$*" in *list-units*) printf '%s\\n' \\
+      'node-ctl-stop-dev1.timer loaded active waiting node-ctl stop dev1 at 2099-06-01 16:30:00 UTC' \\
+      '● node-ctl-stop-dev2.timer loaded failed failed node-ctl stop dev2 at 2099-06-02 00:00:00 UTC' \\
+      'other.timer loaded active waiting at 2099-06-01 16:30:00 UTC' ;; esac`,
+  });
+  h.put('dev2', { state: 'running' });
+  const rows = JSON.parse((await h.run(['list', '--json'], { NODE_CTL_PLATFORM: 'linux' })).out) as { name: string; stops_at: number | null }[];
+  expect(rows.map((m) => [m.name, m.stops_at])).toEqual([
+    ['dev1', Date.UTC(2099, 5, 1, 16, 30) / 1000],
+    ['dev2', Date.UTC(2099, 5, 2) / 1000],
+  ]);
+});

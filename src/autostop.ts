@@ -1,9 +1,9 @@
 // start --till and autostop: a stop scheduled on this computer, because only here are the account tokens
-// and the Terraform state (ADR-0019): a launchd job. It runs this binary by its absolute path with
-// NODE_CTL_SCHEDULED set, so a machine stopped by hand in the meantime is nothing to do instead of an
-// error retried forever.
+// and the Terraform state (ADR-0019). On macOS a launchd job, on Linux a transient systemd user timer
+// (ADR-0024). Either runs this binary by its absolute path with NODE_CTL_SCHEDULED set, so a machine
+// stopped by hand in the meantime is nothing to do instead of an error retried forever.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { need, setup, type Ctx, type Run } from './command.ts';
 import { UserError } from './errors.ts';
@@ -13,7 +13,7 @@ import { actionRun, spawn } from './proc.ts';
 
 type Env = Record<string, string | undefined>;
 
-// NODE_CTL_PLATFORM exists for the tests only.
+// NODE_CTL_PLATFORM exists for the tests only: they drive the Linux path on a Mac.
 const platformOf = (env: Env) => env.NODE_CTL_PLATFORM || process.platform;
 
 const two = (n: number) => String(n).padStart(2, '0');
@@ -44,9 +44,24 @@ export function tillAt(t: string, now = Date.now()): number {
   return s;
 }
 
-// Refuses a host that cannot run the stop at that moment, before anything changes.
-export function canSchedule(env: Env): void {
-  if (platformOf(env) !== 'darwin') throw new UserError('--till needs launchd, which only macOS has');
+// Refuses, with how to fix it, a host that cannot run the stop at that moment, before anything changes.
+// Without linger the user manager, and the timer with it, dies at logout: the machine would bill all night.
+export async function canSchedule(env: Env): Promise<void> {
+  const platform = platformOf(env);
+  if (platform === 'darwin') return;
+  if (platform !== 'linux') throw new UserError(`--till needs launchd (macOS) or a systemd user manager (Linux), and this is ${platform}`);
+  const manager = await spawn(['systemctl', '--user', 'show', '--property=Version'], { env });
+  if (manager.status !== 0) {
+    const why = manager.stderr.trim().split('\n')[0] || `exit ${manager.status}`;
+    throw new UserError(
+      `--till needs a systemd user manager, and systemctl --user reaches none (${why}); run node-ctl in a login session of this user (not su or sudo), on a host that boots with systemd`,
+    );
+  }
+  const user = userInfo().username;
+  const linger = await spawn(['loginctl', 'show-user', user, '--property=Linger'], { env });
+  if (linger.stdout.trim() !== 'Linger=yes') {
+    throw new UserError(`--till needs lingering for ${user}, or the timer dies with the session at logout; enable it once: sudo loginctl enable-linger ${user}`);
+  }
 }
 
 // The command the job runs: this binary, which update replaces at the same path (ADR-0023). From source
@@ -59,8 +74,15 @@ function self(env: Env): string[] {
 const q = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 const xml = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const label = (name: string) => `com.node-ctl.stop.${name}`;
+const unit = (name: string) => `node-ctl-stop-${name}`;
 const plistOf = (run: Run, name: string) => join(run.p.launchAgents, `${label(name)}.plist`);
 const domain = () => `gui/${process.getuid?.() ?? 0}`;
+
+// systemd.time: an absolute moment with its zone, so the user manager's own time zone does not matter.
+function utc(at: number): string {
+  const t = new Date(at * 1000);
+  return `${t.getUTCFullYear()}-${two(t.getUTCMonth() + 1)}-${two(t.getUTCDate())} ${two(t.getUTCHours())}:${two(t.getUTCMinutes())}:${two(t.getUTCSeconds())} UTC`;
+}
 
 // launchd runs a job missed while the Mac slept on wake, and RunAtLoad at the next login; the job compares
 // the clock itself, so neither stops the machine early. A failed stop exits 1 and is retried a minute later.
@@ -92,8 +114,25 @@ function plist(run: Run, name: string, at: number): string {
 `;
 }
 
+// A transient timer goes away with its service once the stop succeeded; a failed one is restarted a minute
+// later until it does, as the launchd job retries (ADR-0024). A reboot drops it: list then shows none.
+function timer(run: Run, name: string, at: number): string[] {
+  const when = utc(at);
+  return [
+    'systemd-run', '--user', '--quiet', '--collect', `--unit=${unit(name)}`, `--on-calendar=${when}`,
+    `--description=node-ctl stop ${name} at ${when}`,
+    '--property=Restart=on-failure', '--property=RestartSec=60',
+    `--setenv=NODE_CTL_HOME=${run.p.home}`, '--setenv=NODE_CTL_SCHEDULED=1', `--setenv=PATH=${run.env.PATH ?? ''}`,
+    ...self(run.env), '--progress=plain', 'stop', name,
+  ];
+}
+
 async function drop(run: Run, name: string): Promise<void> {
-  if (platformOf(run.env) === 'darwin' && existsSync(plistOf(run, name))) {
+  const platform = platformOf(run.env);
+  if (platform === 'linux') {
+    // nothing scheduled, or no user manager at all: there is nothing to drop either way
+    await spawn(['systemctl', '--user', 'stop', `${unit(name)}.timer`, `${unit(name)}.service`], { env: run.env });
+  } else if (platform === 'darwin' && existsSync(plistOf(run, name))) {
     await spawn(['launchctl', 'bootout', `${domain()}/${label(name)}`], { env: run.env });
     rmSync(plistOf(run, name), { force: true });
   }
@@ -109,13 +148,17 @@ export async function scheduleStop(run: Run, name: string, at: number | undefine
   }
   return run.progress.withAction('Schedule the stop', 'schedule', async () => {
     await drop(run, name); // one job per machine: a later call moves it
-    try {
-      mkdirSync(run.p.launchAgents, { recursive: true });
-      writeFileSync(plistOf(run, name), plist(run, name, at));
-    } catch (e) {
-      throw new ActionFailure(e instanceof Error ? e.message : String(e));
+    let r;
+    if (platformOf(run.env) === 'linux') r = await actionRun(run.progress, timer(run, name, at), { env: run.env });
+    else {
+      try {
+        mkdirSync(run.p.launchAgents, { recursive: true });
+        writeFileSync(plistOf(run, name), plist(run, name, at));
+      } catch (e) {
+        throw new ActionFailure(e instanceof Error ? e.message : String(e));
+      }
+      r = await actionRun(run.progress, ['launchctl', 'bootstrap', domain(), plistOf(run, name)], { env: run.env });
     }
-    const r = await actionRun(run.progress, ['launchctl', 'bootstrap', domain(), plistOf(run, name)], { env: run.env });
     if (r.status !== 0) throw new ActionFailure('', r.status);
     run.progress.log(`${name} stops at ${local(new Date(at * 1000))} ${zone(at)}`);
   });
@@ -126,9 +169,17 @@ const zone = (at: number) =>
   new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(new Date(at * 1000)).find((p) => p.type === 'timeZoneName')?.value ?? '';
 
 // The moment each machine's job stops it, for list. A plist holds it as "-ge <seconds>" (one that does not
-// say it once is no timer).
+// say it once is no timer); a timer in its description, which the user manager lists.
 export async function stopTimes(run: Pick<Run, 'p' | 'env'>): Promise<Record<string, number>> {
   const stops: Record<string, number> = {};
+  if (platformOf(run.env) === 'linux') {
+    const r = await spawn(['systemctl', '--user', 'list-units', '--all', '--plain', '--no-legend', '--type=timer', 'node-ctl-stop-*'], { env: run.env });
+    for (const line of r.stdout.split('\n')) {
+      const m = /(?:^|\s)node-ctl-stop-(\S+)\.timer\s.* at ([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}) UTC$/.exec(line.trim());
+      if (m) stops[m[1]!] = Date.UTC(Number(m[2]), Number(m[3]) - 1, Number(m[4]), Number(m[5]), Number(m[6]), Number(m[7])) / 1000;
+    }
+    return stops;
+  }
   const dir = run.p.launchAgents;
   if (!existsSync(dir)) return stops;
   for (const f of readdirSync(dir).sort()) {
@@ -160,6 +211,6 @@ export const autostop = async (ctx: Ctx): Promise<void> => {
     return;
   }
   const at = tillAt(when!);
-  canSchedule(run.env);
+  await canSchedule(run.env);
   if (!(await scheduleStop(run, name!, at))) throw new UserError(`could not schedule the stop of ${name}`);
 };

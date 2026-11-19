@@ -2586,3 +2586,78 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
   [ "$status" -eq 1 ]
   [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev1.plist" ]
 }
+
+# The systemd path, forced on any host through NODE_CTL_PLATFORM, which only tests set. The bash CLI has
+# none (launchd only): these are the binary's, with no bats reference from bash (T06).
+linux() { NODE_CTL_PLATFORM=linux "$RAE" "$@"; }
+unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the systemd-run stub kept
+
+@test "on Linux start --till runs a transient user timer at that moment in UTC, which list shows and a start without --till drops" {
+  bash_cli && skip "launchd only in the bash CLI"
+  "$RAE" create dev1; "$RAE" stop dev1; : > "$STUB_LOG"
+  TZ=Europe/Berlin run linux start dev1 --till "2099-06-01 18:30"
+  [ "$status" -eq 0 ]
+  # 18:30 in Berlin is 16:30 UTC in summer: the user manager's own time zone does not matter
+  grep -q -- "^systemd-run: --user .*--unit=node-ctl-stop-dev1 --on-calendar=2099-06-01 16:30:00 UTC " "$STUB_LOG"
+  grep -q -- " --property=Restart=on-failure --property=RestartSec=60 " "$STUB_LOG" # a failed stop is retried a minute later
+  grep -q -- " --setenv=NODE_CTL_HOME=$NODE_CTL_HOME " "$STUB_LOG"
+  [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev1.plist" ]
+  ! grep -q "^launchctl:" "$STUB_LOG" || false
+  TZ=Europe/Berlin run linux list
+  [[ $output == *"dev1  main     starting  0m      2099-06-01 18:30"* ]] || false
+  linux stop dev1
+  linux start dev1 # a timer left from an earlier run would stop this one
+  grep -q "^systemctl: --user stop node-ctl-stop-dev1.timer node-ctl-stop-dev1.service" "$STUB_LOG"
+  [ ! -e "$(unit_file dev1 timer)" ]
+  run linux list
+  [[ $output == *"dev1  main     starting  0m      -"* ]] || false
+}
+
+@test "on Linux the timer runs the stop through this binary, and one that fires for a machine stopped since does nothing" {
+  bash_cli && skip "launchd only in the bash CLI"
+  "$RAE" create dev1
+  linux autostop dev1 2h
+  : > "$STUB_LOG"
+  bash "$(unit_file dev1 service)" # the timer fires
+  [ "$(inv dev1 .state)" = stopped ]
+  grep -q "terraform: -chdir=terraform apply" "$STUB_LOG"
+  : > "$STUB_LOG"
+  run bash "$(unit_file dev1 service)"
+  [ "$status" -eq 0 ] # exit 0: Restart=on-failure does not run it again
+  [[ $output == *"dev1 is not running; nothing to stop"* ]] || false
+  ! grep -q "terraform: .* apply" "$STUB_LOG" || false
+}
+
+@test "on Linux autostop moves or drops the timer of a running machine" {
+  bash_cli && skip "launchd only in the bash CLI"
+  "$RAE" create dev1; : > "$STUB_LOG"
+  linux autostop dev1 2h
+  TZ=UTC linux autostop dev1 "2099-06-01 18:30" # one timer per machine: the earlier one goes first
+  [ "$(grep -c "^systemd-run:" "$STUB_LOG")" -eq 2 ]
+  [ "$(line_of "systemctl: --user stop node-ctl-stop-dev1.timer")" -lt "$(line_of "--on-calendar=2099-06-01 18:30:00 UTC")" ]
+  TZ=UTC run linux list
+  [[ $output == *"dev1  main     starting  0m      2099-06-01 18:30"* ]] || false
+  run linux autostop dev1 off
+  [ "$status" -eq 0 ]
+  [[ $output == *"dev1 has no autostop"* ]] || false
+  [ ! -e "$(unit_file dev1 timer)" ]
+  [ "$(inv dev1 .state)" = running ]
+}
+
+@test "on Linux --till and autostop refuse without a user manager or without linger, say how to fix it, and change nothing" {
+  bash_cli && skip "launchd only in the bash CLI"
+  "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop dev2; : > "$STUB_LOG"
+  STUB_NO_USER_MANAGER=1 run linux start dev2 --till 2h
+  [ "$status" -eq 1 ]
+  [[ $output == *"--till needs a systemd user manager"*"Failed to connect to bus"* ]] || false
+  STUB_LINGER=no run linux start dev2 --till 2h
+  [ "$status" -eq 1 ]
+  [[ $output == *"--till needs lingering for $(id -un)"*"sudo loginctl enable-linger $(id -un)"* ]] || false
+  STUB_LINGER=no run linux autostop dev1 19:30
+  [ "$status" -eq 1 ]
+  [[ $output == *"sudo loginctl enable-linger"* ]] || false
+  [ "$(inv dev2 .state)" = stopped ]
+  ! grep -q "^systemd-run:" "$STUB_LOG" || false
+  ! grep -q "terraform: .* apply" "$STUB_LOG" || false
+  ! grep -q "^loginctl: enable-linger" "$STUB_LOG" || false # never enabled for the user
+}
