@@ -1,7 +1,7 @@
 // The Contabo API for what its Terraform provider does not model (ADR-0018). Credentials are the
 // account's own, handed to each call; every request carries its own x-request-id, which is also what
 // Contabo support asks for.
-import { request, sleep } from './http.ts';
+import { apiUrl, request, sleep } from './http.ts';
 
 type Env = Record<string, string | undefined>;
 type Account = { client_id: string; client_secret: string; user: string; password: string };
@@ -46,4 +46,39 @@ export async function waitInstance(env: Env, a: Account, name: string): Promise<
     await sleep(10_000, env);
   }
   throw new Error(`the Contabo instance ${name} is still ${status || 'not found'} after 15 minutes`);
+}
+
+// contabo.sh image: the id (a UUID) of a standard image. A changed id reinstalls the machine, so create
+// looks it up once and the inventory carries it from then on.
+export async function image(env: Env, a: Account, name = 'ubuntu-24.04'): Promise<string> {
+  const t = await token(env, a);
+  if (!t) throw new Error('Contabo refused the credentials: no access token');
+  const answer = (await compute(env, t, `/v1/compute/images?standardImage=true&size=100&name=${encodeURIComponent(name)}`)) as {
+    data?: { name?: unknown; imageId?: unknown }[];
+  } | null;
+  const id = answer?.data?.find((d) => d.name === name)?.imageId;
+  if (typeof id !== 'string' || !id) throw new Error(`Contabo has no standard image named ${name}`);
+  return id;
+}
+
+// The regions the Terraform provider documents (contabo/resource_instance.go).
+export const REGIONS = ['EU', 'US-central', 'US-east', 'US-west', 'SIN'];
+
+// "<id> <product>, <disk>" per product. Contabo has no catalogue endpoint and no prices in its API: the
+// products are documented only by the table in createInstance's description, inside the public OpenAPI
+// spec, read on every create so a new line-up needs no release. A shortcut, not a whitelist: an id typed
+// in full is taken as it is. [] when the spec cannot be read.
+export async function products(env: Env): Promise<string[]> {
+  let spec: unknown;
+  try {
+    const res = await fetch(apiUrl(env, 'contabo', '/api-v1.yaml'));
+    if (!res.ok) return [];
+    spec = Bun.YAML.parse(await res.text());
+  } catch {
+    return [];
+  }
+  const paths = (spec as { paths?: Record<string, { post?: { description?: unknown } }> } | null)?.paths;
+  const description = paths?.['/v1/compute/instances']?.post?.description;
+  if (typeof description !== 'string') return [];
+  return [...description.matchAll(/<tr><td>([^<\n]*)<\/td><td>([^<\n]*)<\/td><td>([^<\n]*)<\/td><\/tr>/g)].map((m) => `${m[1]} ${m[2]}, ${m[3]}`);
 }

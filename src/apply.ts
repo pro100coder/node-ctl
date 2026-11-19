@@ -59,7 +59,7 @@ async function contaboInstancesFirst(config: Config, at: Where, progress: Progre
 }
 
 // do_apply: what the Apply Terraform step runs; resize runs it alone, to undo its edit when it fails.
-async function doApply(config: Config, at: Where, progress: Progress, env: Env): Promise<void> {
+export async function doApply(config: Config, at: Where, progress: Progress, env: Env): Promise<void> {
   const tf = { config, home: at.home, progress, env };
   await step(progress, 'terraform init', 'init', () => tfInit(tf, 'hetzner'));
   if (Object.keys(config.contabo).length) await step(progress, 'terraform init (contabo)', 'init', () => tfInit(tf, 'contabo'));

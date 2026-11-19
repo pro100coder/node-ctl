@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { cato } from './cato.ts';
 import { check } from './check.ts';
+import { create } from './create.ts';
 import { UserError } from './errors.ts';
 import { accountsCommand, init } from './init.ts';
 import { list } from './list.ts';
@@ -13,6 +14,7 @@ import { PAGES, USAGE } from './help.ts';
 import { openLog, tee } from './log.ts';
 import { paths } from './paths.ts';
 import { cancel, whenCancelled } from './proc.ts';
+import { resize } from './resize.ts';
 import { stdinInput, type Input, type Ui } from './ui.ts';
 import { Progress, renderersFor, resolveMode, type Mode } from './progress/progress.ts';
 import type { Out } from './progress/types.ts';
@@ -65,10 +67,12 @@ const ported = new Map<string, Handler>([
   ['check', check],
   ['init', init],
   ['accounts', accountsCommand],
+  ['create', create],
   ['apply', apply],
   ['ports', ports],
   ['expose', expose],
   ['volume', volume],
+  ['resize', resize],
   ['gitkey', gitkey],
   ['hostkeys', hostkeys],
   ['cato', cato],

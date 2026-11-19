@@ -13,14 +13,14 @@ import { remote, tailnetSuffix } from './ssh.ts';
 import { read, menu, type Ui } from './ui.ts';
 
 // ports_json: 22 always, then the others, numeric and once each; anything else is no port.
-function portList(ports: string[]): number[] {
+export function portList(ports: string[]): number[] {
   for (const p of ports) if (!/^[0-9]+$/.test(p)) throw new UserError(`not a port: ${p}`);
   return [...new Set([22, ...ports.map(Number)])].sort((a, b) => a - b);
 }
 
 // A Hetzner Volume is an extra disk at /mnt/volume for data too big for the root disk and its snapshots;
 // it follows the machine through stop and start. GB, 0 for none: asked on a terminal only.
-async function askVolumeSize(ui: Ui): Promise<string> {
+export async function askVolumeSize(ui: Ui): Promise<string> {
   if (!ui.input.terminal) return '0';
   if (ui.drawn) {
     // a typed answer would be a size, not a line number, so only a drawn menu offers a list

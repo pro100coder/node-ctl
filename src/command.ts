@@ -51,3 +51,16 @@ export function step(progress: Progress, name: string, key: string, body: () => 
     if (r.status !== 0) throw new ActionFailure('', r.status);
   });
 }
+
+// with_action over an API call: what the script said on stderr is the error's message, its status 1.
+export function call(progress: Progress, name: string, key: string, body: () => Promise<unknown>): Promise<boolean> {
+  return step(progress, name, key, () =>
+    body().then(
+      () => ({ status: 0 }),
+      (e: unknown) => {
+        progress.log(e instanceof Error ? e.message : String(e), 'stderr');
+        return { status: 1 };
+      },
+    ),
+  );
+}
