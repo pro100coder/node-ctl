@@ -8,8 +8,8 @@ disable-model-invocation: true
 # Migrate this project to the node-ctl machine `$ARGUMENTS`
 
 The machine is `$ARGUMENTS`; with no argument, stop and ask for the name. Run from the project root.
-`node-ctl` is on PATH (`./node-ctl init` in the node-ctl repo links it),
-so `node-ctl list`, `node-ctl ssh <name>` and plain `ssh node-ctl-<name>` work from here.
+`node-ctl` is on PATH (its `install.sh` puts it in `~/.local/bin`; `node-ctl init` links this skill, and the
+machines it knows are in `~/.node-ctl/servers/`), so `node-ctl list`, `node-ctl ssh <name>` and plain `ssh node-ctl-<name>` work from here.
 The machine is x86_64 Ubuntu with Docker, `node-ctl-user` (sudo, docker group), home `/data/node-ctl-home`.
 Only `/data` survives a `node-ctl stop` + `start`; swap, packages and anything under `/usr` do not.
 

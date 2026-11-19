@@ -1,5 +1,5 @@
 # node-ctl configuration. node-ctl init fills it in step by step; node-ctl check verifies it.
-# Copied to node-ctl.yaml (gitignored: it holds every secret) on the first run of init.
+# Seeds ~/.node-ctl/node-ctl.yaml (NODE_CTL_CONFIG), which holds every secret, on the first run of init.
 
 # Hetzner Cloud accounts: a tag of your choice -> API token of that project
 # (console -> project -> Security -> API tokens -> Generate API token, permission Read & Write).
@@ -14,7 +14,7 @@ hetzner: {}
 #  work:
 #    client_id: ""
 #    client_secret: ""
-#    user: ""       # the e-mail you log in with
+#    user: ""       # the Username on that page: an address of its own, not the one you log in with
 #    password: ""   # that API user's own password: "Send link" on that page mails a link to set it
 contabo: {}
 
