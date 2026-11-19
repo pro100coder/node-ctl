@@ -19,12 +19,10 @@ import { cancel, whenCancelled } from './proc.ts';
 import { resize } from './resize.ts';
 import { destroy, start, stop } from './stop.ts';
 import { stdinInput, type Input, type Ui } from './ui.ts';
+import { update } from './update.ts';
+import { SHA, VERSION } from './version.ts';
 import { Progress, renderersFor, resolveMode, type Mode } from './progress/progress.ts';
 import type { Out } from './progress/types.ts';
-
-// Set by bun build --define; a run from source has neither.
-declare const NODE_CTL_VERSION: string | undefined;
-declare const NODE_CTL_SHA: string | undefined;
 
 interface Io {
   stdout: Out;
@@ -53,13 +51,11 @@ export type Handler = (ctx: Context) => Promise<number | void> | number | void;
 // The dispatch table, in the order of the bash dispatch line; test/cli.test.ts holds every entry to a help page.
 export const COMMANDS = [
   'create', 'stop', 'start', 'resize', 'volume', 'destroy', 'list', 'load', 'ports', 'expose', 'backup', 'archive',
-  'restore', 'ssh', 'gitkey', 'hostkeys', 'autostop', 'cato', 'apply', 'check', 'init', 'accounts', 'version',
+  'restore', 'ssh', 'gitkey', 'hostkeys', 'autostop', 'cato', 'apply', 'check', 'init', 'accounts', 'update', 'version',
 ];
 
 const version: Handler = ({ io }) => {
-  const v = typeof NODE_CTL_VERSION === 'string' ? NODE_CTL_VERSION : 'dev';
-  const sha = typeof NODE_CTL_SHA === 'string' && NODE_CTL_SHA ? ` (${NODE_CTL_SHA})` : '';
-  io.stdout.write(`node-ctl ${v}${sha}\n`);
+  io.stdout.write(`node-ctl ${VERSION}${SHA ? ` (${SHA})` : ''}\n`);
 };
 
 const ported = new Map<string, Handler>([
@@ -86,6 +82,7 @@ const ported = new Map<string, Handler>([
   ['archive', archive],
   ['restore', restore],
   ['autostop', autostop],
+  ['update', update],
 ]);
 
 // Only the options before the command are global: after it every word is the command's (ssh passes them on).

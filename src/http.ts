@@ -7,6 +7,7 @@ const APIS = {
   contabo: ['NODE_CTL_CONTABO_API', 'https://api.contabo.com'], // /v1/compute/..., /api-v1.yaml
   contaboAuth: ['NODE_CTL_CONTABO_AUTH', 'https://auth.contabo.com'], // /auth/realms/contabo/protocol/openid-connect/token
   tailscale: ['NODE_CTL_TAILSCALE_API', 'https://api.tailscale.com'], // /api/v2/...
+  releases: ['NODE_CTL_RELEASES', 'https://github.com/pro100coder/node-ctl/releases'], // /latest, /download/<tag>/<asset>
 } as const;
 
 type Api = keyof typeof APIS;

@@ -43,6 +43,7 @@ export const USAGE = `usage: node-ctl [--progress=auto|tty|plain|json] <command>
   destroy <name> [--yes]       delete VPS, snapshot and volume (asks for confirmation); on Contabo
                                it cancels the contract, which Contabo bills to the end of the period
   apply [name ...]             terraform apply for the whole inventory, then the agent setup to name (every running one)
+  update [--force]             replace this binary with the latest release, at the same path, once its sha256 matches
   version
 Progress goes to stderr as actions (--progress: auto is tty on a terminal, plain in a pipe or CI;
 json is the raw event stream), results to stdout. Every run is appended to node-ctl.log.
@@ -319,6 +320,22 @@ whose apply was cut short. Terraform always applies the whole inventory.
 Examples:
   node-ctl apply
   node-ctl apply dev1
+`,
+  update: `usage: node-ctl update [--force]
+
+Download the latest release for this OS and architecture, check its sha256 against the release's
+checksums.txt and rename it over this binary. The path stays, so the launchd job (macOS) or systemd user
+timer (Linux) of start --till runs the new binary; a download that fails or does not match leaves the old
+one as it was. A link is followed: the file it points to is replaced. The latest release or an older one
+changes nothing. NODE_CTL_RELEASES replaces https://github.com/pro100coder/node-ctl/releases.
+
+Options:
+  --force    install the latest release even if it is not newer; a dev build (version dev) needs it,
+             since it has no version to compare
+
+Examples:
+  node-ctl update
+  node-ctl version
 `,
   version: `usage: node-ctl version
 
