@@ -6,6 +6,7 @@
 //   NODE_CTL_TAILSCALE_API  default https://api.tailscale.com
 //   NODE_CTL_CONTABO_API    default https://api.contabo.com
 //   NODE_CTL_CONTABO_AUTH   default https://auth.contabo.com
+//   NODE_CTL_RELEASES       default https://github.com/pro100coder/node-ctl/releases (a base with a path: /latest, /download/<tag>/<asset>)
 // The wrapper sets them to http://127.0.0.1:<port>.
 // Every request is appended to $STUB_LOG as one line, under the real service's URL so assertions do not care
 // where the server listens:
@@ -14,8 +15,9 @@
 // Behaviour (named after the curl stub of the bash CLI): STUB_CURL_BODY answers everything, STUB_FAIL=curl
 // rejects everything with 401, curl-devices rejects */devices with 403, STUB_CURL_FAIL_ONCE=<suffix> drops
 // the first request whose URL ends in it, STUB_CONTABO_STATUS / STUB_CONTABO_ADDONS shape the instance list.
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+// Releases come from the directory STUB_RELEASES: its file tag names the latest, every other file is an asset of it.
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer, type ServerResponse } from 'node:http';
 
 const env = process.env;
 const log = env.STUB_LOG;
@@ -26,6 +28,7 @@ const REAL: Record<string, string> = {
   tailscale: 'https://api.tailscale.com',
   contabo: 'https://api.contabo.com',
   'contabo-auth': 'https://auth.contabo.com',
+  releases: 'https://github.com/pro100coder/node-ctl/releases',
 };
 const DEFAULT = '{"id":"kid","key":"tskey-client-k","access_token":"at","devices":[],"servers":[{"id":7}],"server":{"status":"off"},"image":{"id":"4711","status":"available"},"images":[{"id":4711,"description":"node-ctl dev1"}],"data":[{"imageId":"img-ubuntu-24.04","name":"ubuntu-24.04"}]}';
 const SPEC = `paths:
@@ -52,7 +55,18 @@ function auth(h: string | undefined): string {
   return ` auth=${h}`;
 }
 
-const serve = (base: string) => createServer((req, res) => {
+// As GitHub: /latest redirects to the page of its tag, an asset is at /latest/download/<asset> and /download/<tag>/<asset>.
+function release(path: string, res: ServerResponse): void {
+  const dir = env.STUB_RELEASES;
+  const tag = dir && existsSync(`${dir}/tag`) ? readFileSync(`${dir}/tag`, 'utf8').trim() : '';
+  if (!tag) return void res.writeHead(404).end('Not Found');
+  if (path === '/latest') return void res.writeHead(302, { location: `${REAL.releases}/tag/${tag}` }).end();
+  const asset = /^\/(?:latest\/download|download\/([^/]+))\/([^/]+)$/.exec(path);
+  if (!asset || (asset[1] !== undefined && asset[1] !== tag) || asset[2] === 'tag' || !existsSync(`${dir}/${asset[2]}`)) return void res.writeHead(404).end('Not Found');
+  res.writeHead(200, { 'content-type': 'application/octet-stream' }).end(readFileSync(`${dir}/${asset[2]}`));
+}
+
+const serve = (name: string, base: string) => createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on('data', (c: Buffer) => chunks.push(c));
   req.on('end', () => {
@@ -60,6 +74,7 @@ const serve = (base: string) => createServer((req, res) => {
     const raw = Buffer.concat(chunks).toString();
     const body = raw ? ` body=${compact(raw, req.headers['content-type'] ?? '')}` : '';
     appendFileSync(log, `http: ${req.method} ${url.href}${auth(req.headers.authorization)}${body}\n`);
+    if (name === 'releases') return release(req.url ?? '/', res);
 
     const fail = (code: number): void => void res.writeHead(code, { 'content-type': 'application/json' }).end('{"error":"stub"}');
     const failing = ` ${env.STUB_FAIL ?? ''} `;
@@ -86,7 +101,7 @@ const serve = (base: string) => createServer((req, res) => {
 });
 
 for (const [name, base] of Object.entries(REAL)) {
-  serve(base).listen(0, '127.0.0.1', function (this: ReturnType<typeof createServer>) {
+  serve(name, base).listen(0, '127.0.0.1', function (this: ReturnType<typeof createServer>) {
     const addr = this.address();
     if (addr && typeof addr === 'object') process.stdout.write(`${name} ${addr.port}\n`);
   });

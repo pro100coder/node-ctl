@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test wrapper: runs the compiled node-ctl ($NODE_CTL_BIN) against its own tests/stubs/http-server.ts, with the
+# Test wrapper: runs the compiled node-ctl ($NODE_CTL_BIN; install.sh's tests set it to sh) against its own tests/stubs/http-server.ts, with the
 # renderer's events in $STUB_EVENTS and waits zeroed (unless STUB_SLEEP_REAL: a test that must interrupt it).
 # The binary runs in the foreground, so a Ctrl+C aimed at the process group reaches it as it would in a terminal.
 set -u
@@ -11,17 +11,20 @@ trap '[ -z "$srv" ] || kill "$srv" 2>/dev/null; rm -rf "$dir"' EXIT
 bun "$here/http-server.ts" >"$dir/port" 2>"$dir/err" </dev/null &
 srv=$!
 disown "$srv" # no "Terminated" job message on the wrapper's stderr
-for _ in $(seq 1 200); do [ "$(grep -c . "$dir/port")" -ge 4 ] && break; /bin/sleep 0.02; done
+for _ in $(seq 1 200); do [ "$(grep -c . "$dir/port")" -ge 5 ] && break; /bin/sleep 0.02; done
 port_of() { awk -v n="$1" '$1 == n { print $2 }' "$dir/port"; }
-for s in hetzner tailscale contabo contabo-auth; do
+for s in hetzner tailscale contabo contabo-auth releases; do
   [ -n "$(port_of "$s")" ] || { echo "node-ctl-bin: the test HTTP server did not start: $(cat "$dir/err")" >&2; exit 99; }
 done
 NODE_CTL_HETZNER_API="http://127.0.0.1:$(port_of hetzner)"
 NODE_CTL_TAILSCALE_API="http://127.0.0.1:$(port_of tailscale)"
 NODE_CTL_CONTABO_API="http://127.0.0.1:$(port_of contabo)"
 NODE_CTL_CONTABO_AUTH="http://127.0.0.1:$(port_of contabo-auth)"
-export NODE_CTL_HETZNER_API NODE_CTL_TAILSCALE_API NODE_CTL_CONTABO_API NODE_CTL_CONTABO_AUTH
-export NODE_CTL_SELF="$here/node-ctl-bin" # a scheduled stop runs through this wrapper too, never against the real APIs
+NODE_CTL_RELEASES="http://127.0.0.1:$(port_of releases)"
+export NODE_CTL_HETZNER_API NODE_CTL_TAILSCALE_API NODE_CTL_CONTABO_API NODE_CTL_CONTABO_AUTH NODE_CTL_RELEASES
+# A scheduled stop runs through this wrapper too, never against the real APIs. Set empty, the job runs the binary's
+# own path: only for a test that replaces the binary with a fixture before it fires the job.
+export NODE_CTL_SELF="${NODE_CTL_SELF-$here/node-ctl-bin}"
 [ -n "${STUB_SLEEP_REAL:-}" ] || export NODE_CTL_NO_WAIT=1
 if [ -n "${STUB_EVENTS:-}" ]; then
   export NODE_CTL_PROGRESS=${NODE_CTL_PROGRESS:-json}
