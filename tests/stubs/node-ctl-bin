@@ -21,6 +21,7 @@ NODE_CTL_TAILSCALE_API="http://127.0.0.1:$(port_of tailscale)"
 NODE_CTL_CONTABO_API="http://127.0.0.1:$(port_of contabo)"
 NODE_CTL_CONTABO_AUTH="http://127.0.0.1:$(port_of contabo-auth)"
 export NODE_CTL_HETZNER_API NODE_CTL_TAILSCALE_API NODE_CTL_CONTABO_API NODE_CTL_CONTABO_AUTH
+export NODE_CTL_SELF="$here/node-ctl-bin" # a scheduled stop runs through this wrapper too, never against the real APIs
 [ -n "${STUB_SLEEP_REAL:-}" ] || export NODE_CTL_NO_WAIT=1
 if [ -n "${STUB_EVENTS:-}" ]; then
   export NODE_CTL_PROGRESS=${NODE_CTL_PROGRESS:-json}

@@ -2,6 +2,7 @@
 // help (answered before anything is read, so it works on a fresh install), then one command.
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
+import { autostop } from './autostop.ts';
 import { cato } from './cato.ts';
 import { archive, backup, restore } from './archive.ts';
 import { check } from './check.ts';
@@ -84,6 +85,7 @@ const ported = new Map<string, Handler>([
   ['backup', backup],
   ['archive', archive],
   ['restore', restore],
+  ['autostop', autostop],
 ]);
 
 // Only the options before the command are global: after it every word is the command's (ssh passes them on).

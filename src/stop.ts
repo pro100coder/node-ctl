@@ -5,7 +5,7 @@
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { apply } from './apply.ts';
-import { scheduleStop, tillAt } from './autostop.ts';
+import { canSchedule, scheduleStop, tillAt } from './autostop.ts';
 import { catoAfterStart } from './cato.ts';
 import { call, need, reach, setup, target, type Ctx, type Run } from './command.ts';
 import * as contabo from './contabo.ts';
@@ -130,6 +130,16 @@ const stopFailed = (run: Run, name: string) =>
 export const stop = async (ctx: Ctx): Promise<number | void> => {
   const run = setup(ctx);
   const { p, config, progress, env } = run;
+  // The scheduled stop (autostop.ts): a machine stopped by hand or destroyed since then is done with,
+  // not a failure the job would retry every minute.
+  const due = env.NODE_CTL_SCHEDULED && ctx.args.length === 1 ? ctx.args[0]! : undefined;
+  if (due !== undefined) {
+    const m = machineNames(p.servers).includes(due) ? readMachine(p.servers, due) : undefined;
+    if (m?.state !== 'running' && m?.stopping == null) {
+      ctx.io.stdout.write(`${due} is not running; nothing to stop\n`);
+      return;
+    }
+  }
   const args = await target(ctx, p.servers, 'stop', ['running'], ctx.args.length ? undefined : 'every running machine');
   if (!(await reach(run))) return 1;
   const names: string[] = [];
@@ -223,6 +233,7 @@ export const start = async (ctx: Ctx): Promise<number | void> => {
     else if (a.startsWith('-')) throw new UserError(`unknown option: ${a}`);
     else names.push(a);
   }
+  if (till !== undefined) canSchedule(env);
   if (all) {
     if (names.length) throw new UserError('--all takes no names');
     names.push(...machineNames(p.servers).filter((n) => readMachine(p.servers, n).state === 'stopped'));

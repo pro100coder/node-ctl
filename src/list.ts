@@ -1,7 +1,6 @@
 // list and accounts: the inventory as a table or as JSON, in the shape the bash jq programs printed,
 // byte for byte (scripts and the migration check compare list --json).
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { stopTimes } from './autostop.ts';
 import type { Handler } from './cli.ts';
 import { accounts, loadConfig, type Config } from './config.ts';
 import { UserError } from './errors.ts';
@@ -55,25 +54,6 @@ async function peers(env: Env): Promise<Record<string, { name: string; online: b
   return seen;
 }
 
-// A stop job holds its moment as "-ge <seconds>"; a plist that does not say it once is no timer.
-function stopTimes(dir: string): Record<string, number> {
-  const stops: Record<string, number> = {};
-  if (!existsSync(dir)) return stops;
-  for (const f of readdirSync(dir).sort()) {
-    const m = /^com\.node-ctl\.stop\.(.*)\.plist$/.exec(f);
-    if (!m) continue;
-    let text = '';
-    try {
-      text = readFileSync(join(dir, f), 'utf8');
-    } catch {
-      continue;
-    }
-    const at = text.match(/-ge [0-9]*/g);
-    if (at?.length === 1 && at[0]!.length > 4) stops[m[1]!] = Number(at[0]!.slice(4));
-  }
-  return stops;
-}
-
 // A stop's mark counts while its node-ctl still runs.
 async function stillStopping(pid: unknown, env: Env): Promise<boolean> {
   return (await spawn(['ps', '-p', String(pid), '-o', 'command='], { env })).stdout.includes('node-ctl');
@@ -104,7 +84,7 @@ export const list: Handler = async ({ args, progress, io }) => {
   const machines = names.map((name) => ({ name, m: readMachine(p.servers, name) }));
   const tf = await addresses(config, p.home, progress, io.env);
   const ts = await peers(io.env);
-  const stops = stopTimes(p.launchAgents);
+  const stops = await stopTimes({ p, env: io.env });
   const stopping = new Set<string>();
   for (const { name, m } of machines) if (m.state === 'running' && m.stopping != null && (await stillStopping(m.stopping, io.env))) stopping.add(name);
 

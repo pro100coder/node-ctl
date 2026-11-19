@@ -21,7 +21,7 @@ function home(opts: { peers?: string; tf?: string; noTailscale?: boolean } = {})
   const put = (name: string, m: object) => writeFileSync(join(dir, 'servers', `${name}.json`), JSON.stringify(m));
   const run = async (args: string[], color = false) => {
     const stdout = new Sink();
-    const env = { HOME: dir, NODE_CTL_HOME: dir, LAUNCH_AGENTS: join(dir, 'agents'), PATH };
+    const env = { HOME: dir, NODE_CTL_HOME: dir, LAUNCH_AGENTS: join(dir, 'agents'), NODE_CTL_PLATFORM: 'darwin', PATH };
     const code = await main(args, { stdout, stderr: new Sink(), env, terminal: false, color });
     return { code, out: stdout.text };
   };
