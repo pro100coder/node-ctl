@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { account, accounts, type Config } from './config.ts';
 import { UserError } from './errors.ts';
 
-export interface Machine {
+interface Machine {
   state?: string; // running | stopped | archived
   account?: string; // the tag of the account it lives in
   type?: string;

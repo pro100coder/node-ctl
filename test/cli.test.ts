@@ -7,10 +7,12 @@ import { PAGES, USAGE } from '../src/help.ts';
 import { Sink } from './helpers.ts';
 
 // One in-process run: what it printed on each stream and its exit code. No terminal, no config.
+// The log goes to a temporary file unless a test says otherwise: never the user's own ~/.node-ctl.
 async function run(argv: string[], env: Record<string, string> = {}) {
   const stdout = new Sink();
   const stderr = new Sink();
-  const code = await main(argv, { stdout, stderr, env, terminal: false });
+  const log = join(mkdtempSync(join(tmpdir(), 'node-ctl-log-')), 'node-ctl.log');
+  const code = await main(argv, { stdout, stderr, env: { NODE_CTL_LOG: log, ...env }, terminal: false });
   return { code, out: stdout.text, err: stderr.text };
 }
 

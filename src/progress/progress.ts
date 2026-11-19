@@ -45,14 +45,16 @@ export function resolveMode(requested: string, at: { terminal: boolean; ci: bool
 export function renderersFor(
   mode: Mode,
   stderr: Out,
-  opts: { events?: string; color: boolean; columns: number },
+  opts: { events?: string; color: boolean; columns: number; log?: Out },
 ): Renderer[] {
+  // whatever the screen gets, the log gets every line, plain and stamped with the time
+  const log = opts.log ? [new PlainRenderer(opts.log, Date.now, true)] : [];
   if (mode === 'json') {
     const path = opts.events;
-    return [new JsonRenderer(path ? { write: (text: string) => appendFileSync(path, text) } : stderr)];
+    return [new JsonRenderer(path ? { write: (text: string) => appendFileSync(path, text) } : stderr), ...log];
   }
-  if (mode === 'tty') return [new TtyRenderer(stderr, { color: opts.color, columns: opts.columns })];
-  return [new PlainRenderer(stderr)];
+  if (mode === 'tty') return [new TtyRenderer(stderr, { color: opts.color, columns: opts.columns }), ...log];
+  return [new PlainRenderer(stderr), ...log];
 }
 
 interface Action {
@@ -179,5 +181,12 @@ export class Progress {
   // The final frame lands before whatever the caller prints next.
   close(): void {
     for (const r of this.#renderers ?? []) r.close();
+  }
+
+  // A question shares the terminal with the live region, which would tear it apart: the renderers
+  // are closed, and the next event opens new ones (bash: close_renderer, reopened by the next emit).
+  suspend(): void {
+    this.close();
+    this.#renderers = undefined;
   }
 }

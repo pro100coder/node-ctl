@@ -2,7 +2,7 @@ import type { ActionEvent, Out, Renderer } from '../types.ts';
 import { fmtDuration } from './util.ts';
 
 // Local "YYYY-MM-DD HH:MM:SS", the form of the run header node-ctl writes with date '+%F %T'.
-const stamp = (ms: number): string => {
+export const stamp = (ms: number): string => {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
