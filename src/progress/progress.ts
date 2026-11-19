@@ -143,6 +143,23 @@ export class Progress {
     return true;
   }
 
+  // A child of the current action that runs beside its siblings, under an id of its own (the credential
+  // probes, c1-<tag> ...): it is never the current action, so every sibling has started before any of
+  // them settles. The body's text is the completed message; an error fails it with its message.
+  async concurrent(id: string, name: string, key: string, body: () => Promise<string | void>): Promise<boolean> {
+    this.#actions.set(id, { name, key, parent: this.#current });
+    this.#emit(id, 'started');
+    let message: string | void;
+    try {
+      message = await body();
+    } catch (e) {
+      this.#emit(id, 'failed', { message: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+    this.#emit(id, 'completed', message ? { message } : {});
+    return true;
+  }
+
   log(message: string, stream?: 'stdout' | 'stderr'): void {
     const id = this.#current;
     if (id) this.#emit(id, 'log', stream ? { stream, message } : { message });

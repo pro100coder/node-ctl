@@ -37,9 +37,19 @@ test('a page is answered by help <command>, or by -h/--help anywhere after the c
 
 test('ssh hands everything after the name to the machine, --help included; only its first argument asks for the page', async () => {
   expect((await run(['ssh', '--help'])).out).toBe(PAGES.ssh!);
-  const passed = await run(['ssh', 'dev1', 'ls', '--help']);
-  expect(passed.out).toBe('');
-  expect(passed.err).toBe('node-ctl: ssh is not implemented yet\n');
+  let args: string[] = [];
+  const log = join(mkdtempSync(join(tmpdir(), 'node-ctl-log-')), 'node-ctl.log');
+  const io = { stdout: new Sink(), stderr: new Sink(), env: { NODE_CTL_LOG: log }, terminal: false };
+  expect(await main(['ssh', 'dev1', 'ls', '--help'], io, new Map([['ssh', (ctx) => void (args = ctx.args)]]))).toBe(0);
+  expect(args).toEqual(['dev1', 'ls', '--help']);
+  expect(io.stdout.text).toBe('');
+});
+
+test('a handler that answers a number exits with it, as a command whose last step was ssh did', async () => {
+  const log = join(mkdtempSync(join(tmpdir(), 'node-ctl-log-')), 'node-ctl.log');
+  const io = { stdout: new Sink(), stderr: new Sink(), env: { NODE_CTL_LOG: log }, terminal: false };
+  expect(await main(['ssh', 'dev1', 'false'], io, new Map([['ssh', () => 255]]))).toBe(255);
+  expect(await main(['load'], io, new Map([['load', () => {}]]))).toBe(0);
 });
 
 test('an unknown command is an error with the usage; asking for its page names it', async () => {

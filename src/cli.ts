@@ -2,7 +2,11 @@
 // help (answered before anything is read, so it works on a fresh install), then one command.
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
+import { check } from './check.ts';
 import { UserError } from './errors.ts';
+import { accountsCommand, init } from './init.ts';
+import { list } from './list.ts';
+import { load, ssh } from './load.ts';
 import { PAGES, USAGE } from './help.ts';
 import { openLog, tee } from './log.ts';
 import { paths } from './paths.ts';
@@ -36,7 +40,8 @@ interface Context {
   io: Io;
 }
 
-export type Handler = (ctx: Context) => Promise<void> | void;
+// A handler that answers a number exits with it, as the bash command whose last step was a child's (ssh, load).
+export type Handler = (ctx: Context) => Promise<number | void> | number | void;
 
 // The dispatch table, in the order of the bash dispatch line; test/cli.test.ts holds every entry to a help page.
 export const COMMANDS = [
@@ -50,7 +55,15 @@ const version: Handler = ({ io }) => {
   io.stdout.write(`node-ctl ${v}${sha}\n`);
 };
 
-const ported = new Map<string, Handler>([['version', version]]);
+const ported = new Map<string, Handler>([
+  ['version', version],
+  ['list', list],
+  ['load', load],
+  ['ssh', ssh],
+  ['check', check],
+  ['init', init],
+  ['accounts', accountsCommand],
+]);
 
 // Only the options before the command are global: after it every word is the command's (ssh passes them on).
 export function parseGlobals(argv: string[]): { yes: boolean; progress: string | undefined; command: string; args: string[] } {
@@ -188,9 +201,9 @@ async function dispatch(
       suspend: () => progress.suspend(),
       raw: io.raw,
     };
-    await handler({ args: globals.args, yes: globals.yes, progress, ui, io });
+    const code = await handler({ args: globals.args, yes: globals.yes, progress, ui, io });
     progress.close();
-    return 0;
+    return code ?? 0;
   } catch (e) {
     progress.settle('failed', e instanceof Error ? e.message : String(e));
     progress.close(); // the final frame lands before the message

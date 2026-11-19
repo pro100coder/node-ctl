@@ -3,6 +3,7 @@
 // needed nor stable, so they are not checked or recorded. Without this, BatchMode refuses every
 // new machine ("Host key verification failed") and create never becomes ready.
 import { existsSync, readFileSync } from 'node:fs';
+import { UserError } from './errors.ts';
 import type { Progress } from './progress/progress.ts';
 import { actionRun, spawn } from './proc.ts';
 
@@ -16,7 +17,7 @@ export function tssh(...args: string[]): string[] {
 const APP = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 
 // The Tailscale CLI, wherever this host keeps it; undefined when Tailscale is not installed.
-function tailscaleCli(env: Env = process.env, app = APP): string | undefined {
+export function tailscaleCli(env: Env = process.env, app = APP): string | undefined {
   return Bun.which('tailscale', { PATH: env.PATH ?? '' }) ?? (existsSync(app) ? app : undefined);
 }
 
@@ -56,4 +57,13 @@ export async function ensureKey(progress: Progress, publicKeyFile: string, env: 
   progress.info(`loading ${key} into ssh-agent (asked once; macOS keeps the passphrase in Keychain)`);
   const argv = platform === 'darwin' ? ['ssh-add', '--apple-use-keychain', key] : ['ssh-add', key];
   return (await spawn(argv, { env, stdin: 'inherit', inherit: true })).status === 0;
+}
+
+// With the tailnet off every ssh hangs or fails on a bare name: said before anything runs. Without
+// the CLI MagicDNS is all there is, and ssh reports the rest.
+export async function ensureTailscale(env: Env = process.env, app = APP): Promise<void> {
+  const cli = tailscaleCli(env, app);
+  if (cli && (await spawn([cli, 'status'], { env })).status !== 0) {
+    throw new UserError(`Tailscale is not running on this computer; turn it on, then retry (${cli} up)`);
+  }
 }
