@@ -11,6 +11,18 @@ test('the usage lists every dispatched command, each at the start of its own lin
   expect([...new Set(listed)].sort()).toEqual([...COMMANDS].sort());
 });
 
+test('help describes the binary on PATH, not the bash checkout it replaced', () => {
+  const all = [USAGE, ...Object.values(PAGES)].join('\n');
+  expect(all).not.toContain('./node-ctl');
+  expect(all).not.toContain('BIN_DIR');
+  expect(PAGES.check).not.toMatch(/\b(jq|yq|curl|uuidgen)\b|\bnode\b(?!-)/);
+  expect(PAGES.init).not.toMatch(/link +node-ctl/);
+  for (const c of ['start', 'autostop']) {
+    expect(PAGES[c]).toMatch(/launchd[\s\S]*macOS|macOS[\s\S]*launchd/);
+    expect(PAGES[c]).toMatch(/systemd\s+user timer/);
+  }
+});
+
 // The texts themselves: a change to what help prints shows up in the snapshot's diff, where it is reviewed.
 test('the usage and every page read as recorded', () => {
   expect(USAGE).toMatchSnapshot();

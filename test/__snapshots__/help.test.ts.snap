@@ -49,8 +49,9 @@ Progress goes to stderr as actions (--progress: auto is tty on a terminal, plain
 json is the raw event stream), results to stdout. Every run is appended to node-ctl.log.
 On a terminal a missing <name> is asked (a menu of the machines the command can act on); create also
 asks every option it is not given. Off a terminal a missing <name> is a usage error.
-Environment: NODE_CTL_PROGRESS, NODE_CTL_CONFIG=node-ctl.yaml, SERVERS_DIR=servers, NODE_CTL_LOG=node-ctl.log,
-  GIT_KEY_FILE, BIN_DIR=~/.local/bin, SKILLS_DIR=~/.claude/skills, CLAUDE_DIR=~/.claude, CLAUDE_JSON=~/.claude.json, LAUNCH_AGENTS=~/Library/LaunchAgents, NO_COLOR, FORCE_COLOR.
+Environment: NODE_CTL_HOME=~/.node-ctl, and in it by default NODE_CTL_CONFIG=node-ctl.yaml, SERVERS_DIR=servers,
+  NODE_CTL_LOG=node-ctl.log, GIT_KEY_FILE=keys/node-ctl_user_ed25519; NODE_CTL_PROGRESS, SKILLS_DIR=~/.claude/skills,
+  CLAUDE_DIR=~/.claude, CLAUDE_JSON=~/.claude.json, LAUNCH_AGENTS=~/Library/LaunchAgents, NO_COLOR, FORCE_COLOR.
 node-ctl <command> --help, or node-ctl help <command>: what one command does, its options, examples.
 "
 `;
@@ -102,7 +103,8 @@ exports[`the usage and every page read as recorded: autostop 1`] = `
 
 Set, move or drop the stop of a running machine, as start --till does at a start: HH:MM (tomorrow
 once past today), "YYYY-MM-DD HH:MM" in this computer's time zone, or how long from now: 6h, 6.9h,
-90m. off drops it. list shows it under AUTOSTOP.
+90m. off drops it. list shows it under AUTOSTOP. The stop runs on this computer: a launchd job on
+macOS, a systemd user timer on Linux (see start --help).
 
 Examples:
   node-ctl autostop dev1 3h
@@ -138,9 +140,9 @@ Examples:
 exports[`the usage and every page read as recorded: check 1`] = `
 "usage: node-ctl check
 
-Verify, without changing anything: the host tools (terraform, jq, yq, curl, node, ssh; restic and
-uuidgen when needed), the ssh key and agent, node-ctl.yaml, every Hetzner and Contabo account's
-credentials, Tailscale and the restic bucket, then that a running machine answers over the tailnet.
+Verify, without changing anything: the host tools (terraform, ssh and restic), the ssh key and agent,
+node-ctl.yaml, every Hetzner and Contabo account's credentials, Tailscale and the restic bucket, then
+that a running machine answers over the tailnet.
 Exits 1 when something fails, with the command that fixes it.
 "
 `;
@@ -232,8 +234,8 @@ A value that already works is kept; a step named on the command line is asked ag
 A failed check repeats the question; Ctrl-C keeps what is saved so far.
 
 Steps (in this order):
-  ssh        the public key installed for node-ctl-user on every machine
-  link       node-ctl into BIN_DIR, the node-ctl-migrate skill into SKILLS_DIR, the Include line into ~/.ssh/config
+  ssh        the public key installed for node-ctl-user on every machine, and the Include line into ~/.ssh/config
+  link       the node-ctl-migrate skill, unpacked into NODE_CTL_HOME, linked into SKILLS_DIR
   gitkey     generate the commit key every machine gets (GIT_KEY_FILE); kept once it exists
   hetzner    Hetzner accounts: a tag of your choice and that project's API token, one after another
   contabo    Contabo accounts: a tag, then client id, client secret, user and password
@@ -345,9 +347,12 @@ Options:
   --type [type]  boot it as another server type (Hetzner only, one machine); without a value it shows the types
                  the location creates now whose disk holds the snapshot, and asks
   --till time    stop it then, by this computer's clock and time zone: HH:MM (tomorrow once past today) or
-                 "YYYY-MM-DD HH:MM"; or after that long, counted from this command: 6h, 6.9h, 90m. A launchd job here runs node-ctl stop, so this Mac must be on: one asleep
-                 or logged out stops it on wake or at login. A start without --till cancels an earlier one, autostop moves it;
-                 log: ~/Library/Logs/node-ctl-stop-<name>.log
+                 "YYYY-MM-DD HH:MM"; or after that long, counted from this command: 6h, 6.9h, 90m. The stop runs
+                 here, so this computer must be on. macOS: a launchd job runs node-ctl stop; a Mac asleep or logged
+                 out stops it on wake or at login; log: ~/Library/Logs/node-ctl-stop-<name>.log. Linux: a systemd
+                 user timer (systemd-run --user) runs it, which needs lingering (sudo loginctl enable-linger $USER)
+                 and is lost at a reboot; log: journalctl --user -u node-ctl-stop-<name>. Either retries a failed
+                 stop every minute. A start without --till cancels an earlier one, autostop moves it.
 
 Examples:
   node-ctl start dev1
@@ -381,7 +386,7 @@ Examples:
 exports[`the usage and every page read as recorded: version 1`] = `
 "usage: node-ctl version
 
-The commit this checkout is at, and its date. Same as node-ctl --version.
+The version of this binary and the commit it was built from. Same as node-ctl --version.
 "
 `;
 
