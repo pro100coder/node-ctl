@@ -19,7 +19,8 @@ setup_file() {
 setup() {
   # the caller's shell may export credentials or colour settings; tests must never see them
   unset HCLOUD_TOKEN TAILSCALE_OAUTH_CLIENT_ID TAILSCALE_OAUTH_CLIENT_SECRET \
-        RESTIC_REPOSITORY RESTIC_PASSWORD AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TS_API_KEY FORCE_COLOR NO_COLOR NODE_CTL_COLOR CI
+        RESTIC_REPOSITORY RESTIC_PASSWORD AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TS_API_KEY FORCE_COLOR NO_COLOR NODE_CTL_COLOR CI \
+        NODE_CTL_SELF NODE_CTL_BIN_DIR NODE_CTL_UNAME_S NODE_CTL_UNAME_M
   export SERVERS_DIR="$BATS_TEST_TMPDIR/servers"
   export NODE_CTL_CONFIG="$BATS_TEST_TMPDIR/node-ctl.yaml" # never the repo's own node-ctl.yaml
   export STUB_LOG="$BATS_TEST_TMPDIR/stub.log"
@@ -2567,4 +2568,134 @@ unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the
   ! grep -q "^systemd-run:" "$STUB_LOG" || false
   ! grep -q "terraform: .* apply" "$STUB_LOG" || false
   ! grep -q "^loginctl: enable-linger" "$STUB_LOG" || false # never enabled for the user
+}
+
+# install.sh and update against releases the test server serves from $STUB_RELEASES, never GitHub.
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+release() { # release <tag>: the latest release, every asset a script that says its tag, its name and its arguments
+  export STUB_RELEASES="$BATS_TEST_TMPDIR/releases"
+  local a
+  mkdir -p "$STUB_RELEASES"
+  echo "$1" > "$STUB_RELEASES/tag"
+  for a in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+    printf '#!/bin/sh\necho "node-ctl %s %s $*"\n' "$1" "node-ctl-$a" > "$STUB_RELEASES/node-ctl-$a"
+  done
+  (cd "$STUB_RELEASES" && sha256 node-ctl-* > checksums.txt)
+}
+# install.sh as curl ... | sh runs it, through the wrapper for its test server (NODE_CTL_RELEASES)
+install_sh() { NODE_CTL_BIN=sh "$RAE" -s < "$BATS_TEST_DIRNAME/../install.sh"; }
+
+@test "install.sh puts the latest release for this OS and architecture in ~/.local/bin as an executable file" {
+  release v0.261120.1
+  export HOME="$BATS_TEST_TMPDIR/h"
+  run install_sh
+  [ "$status" -eq 0 ]
+  bin=$HOME/.local/bin/node-ctl
+  [ -f "$bin" ] && [ -x "$bin" ] && [ ! -L "$bin" ] || false
+  run "$bin"
+  [[ $output == "node-ctl v0.261120.1 node-ctl-"* ]] || false
+  cmp "$bin" "$STUB_RELEASES/$(echo "$output" | cut -d' ' -f3)"
+  [ "$(ls -A "$HOME/.local/bin")" = node-ctl ] # no temporary file left
+  run install_sh
+  [[ $output == *"$HOME/.local/bin is not on PATH"* ]] || false
+  PATH="$HOME/.local/bin:$PATH" run install_sh
+  [[ $output != *"not on PATH"* ]] || false
+}
+
+@test "install.sh picks the asset of the OS and architecture uname reports, and refuses any other before downloading" {
+  release v0.261120.1
+  export NODE_CTL_BIN_DIR="$BATS_TEST_TMPDIR/bin"
+  for pair in "Darwin arm64 darwin-arm64" "Darwin x86_64 darwin-x64" "Linux x86_64 linux-x64" "Linux aarch64 linux-arm64"; do
+    set -- $pair
+    NODE_CTL_UNAME_S=$1 NODE_CTL_UNAME_M=$2 run install_sh # uname overridden: only tests set these
+    [ "$status" -eq 0 ]
+    cmp "$NODE_CTL_BIN_DIR/node-ctl" "$STUB_RELEASES/node-ctl-$3"
+  done
+  : > "$STUB_LOG"
+  NODE_CTL_UNAME_S=FreeBSD NODE_CTL_UNAME_M=x86_64 run install_sh
+  [ "$status" -eq 1 ]
+  [[ $output == *"unsupported OS: FreeBSD"* ]] || false
+  NODE_CTL_UNAME_S=Linux NODE_CTL_UNAME_M=i686 run install_sh
+  [ "$status" -eq 1 ]
+  [[ $output == *"unsupported architecture: i686"* ]] || false
+  ! grep -q "^http:" "$STUB_LOG" || false
+  cmp "$NODE_CTL_BIN_DIR/node-ctl" "$STUB_RELEASES/node-ctl-linux-arm64" # what was there stays
+}
+
+@test "install.sh again installs the newer release over the old one, and replaces a link with the file" {
+  export NODE_CTL_BIN_DIR="$BATS_TEST_TMPDIR/bin"
+  release v0.261120.1
+  install_sh
+  release v0.261121.1
+  run install_sh
+  [ "$status" -eq 0 ]
+  run "$NODE_CTL_BIN_DIR/node-ctl"
+  [[ $output == "node-ctl v0.261121.1 "* ]] || false
+  echo old > "$BATS_TEST_TMPDIR/checkout-node-ctl"
+  ln -sf "$BATS_TEST_TMPDIR/checkout-node-ctl" "$NODE_CTL_BIN_DIR/node-ctl" # what the bash CLI's checkout left
+  run install_sh
+  [ "$status" -eq 0 ]
+  [ ! -L "$NODE_CTL_BIN_DIR/node-ctl" ] # launchd and systemd jobs run the file, not a link into a checkout
+  cmp "$NODE_CTL_BIN_DIR/node-ctl" "$STUB_RELEASES/$("$NODE_CTL_BIN_DIR/node-ctl" | cut -d' ' -f3)"
+  [ "$(cat "$BATS_TEST_TMPDIR/checkout-node-ctl")" = old ]
+}
+
+@test "install.sh refuses a download whose sha256 does not match and leaves the installed binary byte for byte" {
+  export NODE_CTL_BIN_DIR="$BATS_TEST_TMPDIR/bin"
+  release v0.261120.1
+  install_sh
+  cp "$NODE_CTL_BIN_DIR/node-ctl" "$BATS_TEST_TMPDIR/before"
+  release v0.261121.1
+  for a in "$STUB_RELEASES"/node-ctl-*; do echo tampered >> "$a"; done
+  run install_sh
+  [ "$status" -eq 1 ]
+  [[ $output == *"sha256"*"does not match"* ]] || false
+  cmp "$NODE_CTL_BIN_DIR/node-ctl" "$BATS_TEST_TMPDIR/before"
+  [ "$(ls -A "$NODE_CTL_BIN_DIR")" = node-ctl ]
+}
+
+installed_copy() { # a copy of the binary under test, which update may replace
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/bin/node-ctl"
+  cp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/before"
+  NODE_CTL_BIN=$BATS_TEST_TMPDIR/bin/node-ctl
+}
+
+@test "update refuses a dev build without --force and leaves the binary as it was" {
+  release v0.261120.1
+  installed_copy
+  run "$RAE" update
+  [ "$status" -eq 1 ]
+  [[ $output == *"node-ctl dev is not a release"*"node-ctl update --force"* ]] || false
+  cmp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/before"
+  run "$RAE" update --yes-please
+  [ "$status" -eq 1 ]
+  [[ $output == *"unknown option: --yes-please"* ]] || false
+}
+
+@test "update replaces the binary at the path the scheduled stop runs, and the job then runs the new one" {
+  release v0.261120.1
+  installed_copy
+  "$RAE" create dev1
+  NODE_CTL_SELF= linux autostop dev1 2h # the job runs the binary itself, as it does outside the suite
+  grep -q "/bin/node-ctl --progress=plain stop dev1" "$(unit_file dev1 service)"
+  run "$RAE" update --force
+  [ "$status" -eq 0 ]
+  [[ $output == *"node-ctl dev → v0.261120.1"* ]] || false
+  [ -x "$NODE_CTL_BIN" ] && [ ! -L "$NODE_CTL_BIN" ] || false
+  [ "$(ls -A "$BATS_TEST_TMPDIR/bin")" = node-ctl ]
+  run bash "$(unit_file dev1 service)" # the timer fires
+  [[ $output == "node-ctl v0.261120.1 node-ctl-"*" --progress=plain stop dev1" ]] || false
+}
+
+@test "update refuses a release whose sha256 does not match and the binary stays byte for byte" {
+  release v0.261120.1
+  for a in "$STUB_RELEASES"/node-ctl-*; do echo tampered >> "$a"; done
+  installed_copy
+  run "$RAE" update --force
+  [ "$status" -eq 1 ]
+  said "checksums.txt says" || false
+  cmp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/before"
+  [ "$(ls -A "$BATS_TEST_TMPDIR/bin")" = node-ctl ]
+  grep -q "http: GET https://github.com/pro100coder/node-ctl/releases/download/v0.261120.1/checksums.txt" "$STUB_LOG"
 }
