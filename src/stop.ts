@@ -27,7 +27,7 @@ const token = (run: Run, name: string) => run.config.hetzner[tagOf(run, name)] ?
 const onContabo = (run: Run, name: string) => exists(run.config, run.p.servers, name).account.provider === 'contabo';
 
 // An inventory write as a step of its own: a full disk or a broken entry fails it with the reason.
-function writeInventory(run: Run, name: string, change: Parameters<typeof editMachine>[2]): Promise<boolean> {
+export function writeInventory(run: Run, name: string, change: Parameters<typeof editMachine>[2]): Promise<boolean> {
   return run.progress.withAction('Write inventory', 'inventory', () => {
     try {
       editMachine(run.p.servers, name, change);
@@ -38,7 +38,7 @@ function writeInventory(run: Run, name: string, change: Parameters<typeof editMa
 }
 
 // ts_logout: free the hostname in the tailnet before the VPS goes away; never fails, it warns.
-function leaveTailnet(run: Run, name: string): Promise<boolean> {
+export function leaveTailnet(run: Run, name: string): Promise<boolean> {
   const { progress, env } = run;
   return progress.withAction('Leave the tailnet', 'logout', async () => {
     // The session itself rides the tailnet: a logout run inline kills the tunnel under ssh, which then
@@ -54,13 +54,13 @@ function leaveTailnet(run: Run, name: string): Promise<boolean> {
 }
 
 // prune_images: nothing of a destroyed or archived machine stays billed.
-async function deleteSnapshot(run: Run, name: string): Promise<void> {
+export async function deleteSnapshot(run: Run, name: string): Promise<void> {
   const { progress, env } = run;
   const deleted = await call(progress, 'Delete the root disk snapshot', 'image', () => pruneImages(env, token(run, name), name, '', (l) => progress.log(l, 'stdout')));
   if (!deleted) progress.warn(`could not delete the snapshot of ${name}; delete it in the Hetzner console`);
 }
 
-function power(run: Run, name: string, on: boolean): Promise<boolean> {
+export function power(run: Run, name: string, on: boolean): Promise<boolean> {
   return call(run.progress, on ? 'Power on' : 'Power off', 'power', () => contabo.power(run.env, run.config.contabo[tagOf(run, name)]!, name, on));
 }
 

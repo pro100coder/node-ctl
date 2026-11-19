@@ -3,6 +3,7 @@
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 import { cato } from './cato.ts';
+import { archive, backup, restore } from './archive.ts';
 import { check } from './check.ts';
 import { create } from './create.ts';
 import { UserError } from './errors.ts';
@@ -80,6 +81,9 @@ const ported = new Map<string, Handler>([
   ['stop', stop],
   ['start', start],
   ['destroy', destroy],
+  ['backup', backup],
+  ['archive', archive],
+  ['restore', restore],
 ]);
 
 // Only the options before the command are global: after it every word is the command's (ssh passes them on).

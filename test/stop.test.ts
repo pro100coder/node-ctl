@@ -1,6 +1,6 @@
 // The commands where data can be lost, run whole through main against a local fake of the Hetzner and
 // Tailscale APIs and fake terraform/ssh: the snapshot that is the only copy of a stopped machine, the
-// order of its writes and deletions, and a stop or start cut short.
+// order of its writes and deletions, the restic credentials, and a stop or start cut short.
 import { afterAll, beforeEach, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,6 +38,8 @@ const server = Bun.serve({
 });
 afterAll(() => server.stop(true));
 
+const SECRETS = { password: 'restic-SECRET-pw', s3: 's3-SECRET-key' };
+
 let home = '';
 let servers = '';
 let rec = ''; // what the fakes record: their argv, ssh's stdin and environment
@@ -54,6 +56,7 @@ beforeEach(() => {
     join(home, '.node-ctl', 'node-ctl.yaml'),
     `hetzner: {main: t}
 tailscale: {client_id: i, client_secret: s}
+restic: {repository: "s3:test", password: ${SECRETS.password}, access_key_id: id, secret_access_key: ${SECRETS.s3}}
 ssh_public_key_file: ${home}/key.pub
 `,
   );
@@ -172,6 +175,52 @@ test('one machine that cannot be stopped does not keep the others running, and s
   expect(applies()).toBe(1); // the one apply deletes the stopped ones' servers and leaves dev2's alone
   const failed = r.events.find((e) => e.event_type === 'failed' && e.action_name === 'Stop dev2');
   expect(failed?.message).toBe('could not snapshot the root disk of dev2; it is powered off and nothing is lost, retry: ./node-ctl stop dev2');
+});
+
+// 5
+test('archive deletes nothing until restic has written the backup', async () => {
+  machine('dev1', { state: 'running', image: '100' });
+  const r = await run(['archive', 'dev1'], { SSH_FAIL_ON: 'restic backup' });
+  expect(r.code).toBe(1);
+  expect(inv('dev1').state).toBe('running');
+  expect(applies()).toBe(0);
+  expect(recorded()).not.toContain('tailscale logout');
+  expect(calls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
+
+  route = (req, url) => (url.pathname === '/v1/images' ? Response.json({ images: [{ id: 100, description: 'node-ctl dev1' }] }) : undefined);
+  const ok = await run(['archive', 'dev1']);
+  expect(ok.code).toBe(0);
+  expect(inv('dev1').state).toBe('archived');
+  const lines = recorded().split('\n');
+  expect(lines.findIndex((l) => l.includes('tailscale logout'))).toBeLessThan(lines.findIndex((l) => l.startsWith('terraform') && l.includes(' apply ')));
+  expect(calls).toContain('DELETE /v1/images/100');
+});
+
+// 6
+test('restic credentials reach the machine only in the piped script: never argv, the environment of ssh, events or the log', async () => {
+  machine('dev1', { state: 'running' });
+  const runs = [await run(['backup', 'dev1']), await run(['restore', 'dev1', 'abc123', '--yes'])];
+  for (const r of runs) expect(r.code).toBe(0);
+  expect(recorded('.stdin')).toContain(`export RESTIC_PASSWORD=${SECRETS.password}`);
+  expect(recorded('.stdin')).toContain(`export AWS_SECRET_ACCESS_KEY=${SECRETS.s3}`);
+  expect(recorded('.stdin')).toContain('restic restore abc123 --target /');
+  for (const secret of Object.values(SECRETS)) {
+    expect(recorded()).not.toContain(secret);
+    expect(recorded('.env')).not.toContain(secret);
+    for (const r of runs) {
+      expect(JSON.stringify(r.events)).not.toContain(secret);
+      expect(r.log).not.toContain(secret);
+    }
+  }
+});
+
+test('the exported values are quoted for the shell there as printf %q did', async () => {
+  machine('dev1', { state: 'running' });
+  writeFileSync(join(home, '.node-ctl', 'node-ctl.yaml'), readFileSync(join(home, '.node-ctl', 'node-ctl.yaml'), 'utf8').replace(SECRETS.password, () => `"p w$'x"`));
+  const r = await run(['backup', 'dev1']);
+  expect(r.err).toBe('');
+  expect(r.code).toBe(0);
+  expect(recorded('.stdin')).toContain("export RESTIC_PASSWORD=p\\ w\\$\\'x\n");
 });
 
 // 7
