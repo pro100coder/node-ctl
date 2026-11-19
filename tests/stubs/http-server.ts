@@ -1,7 +1,6 @@
-// Test stand-in for every HTTP API the compiled node-ctl calls (the bash CLI's calls go to tests/stubs/curl,
-// which logs the same lines). tests/stubs/node-ctl-bin starts one per invocation. It listens on one port per
-// service and prints "<service> <port>" lines on stdout (hetzner, tailscale, contabo, contabo-auth). The binary
-// reads each service's ORIGIN (scheme://host:port, no path; it appends /v1/..., /api/v2/..., /api-v1.yaml, the
+// Test stand-in for every HTTP API the compiled node-ctl calls. tests/stubs/node-ctl-bin starts one per
+// invocation. It listens on one port per service and prints "<service> <port>" lines on stdout (hetzner,
+// tailscale, contabo, contabo-auth). The binary reads each service's ORIGIN (scheme://host:port, no path; it appends /v1/..., /api/v2/..., /api-v1.yaml, the
 // OAuth token path) from:
 //   NODE_CTL_HETZNER_API    default https://api.hetzner.cloud
 //   NODE_CTL_TAILSCALE_API  default https://api.tailscale.com
@@ -12,9 +11,9 @@
 // where the server listens:
 //   http: <METHOD> <canonical url with query> [auth=<Authorization value, Basic as user only>] [body=<compact json | decoded form>]
 // Tokens in the suite are fixtures, so they stay readable: that is how a test tells t from t2.
-// Behaviour, shared with tests/stubs/curl: STUB_CURL_BODY answers everything, STUB_FAIL=curl rejects everything
-// with 401, curl-devices rejects */devices with 403, STUB_CURL_FAIL_ONCE=<suffix> drops the first request whose
-// URL ends in it, STUB_CONTABO_STATUS / STUB_CONTABO_ADDONS shape the instance list.
+// Behaviour (named after the curl stub of the bash CLI): STUB_CURL_BODY answers everything, STUB_FAIL=curl
+// rejects everything with 401, curl-devices rejects */devices with 403, STUB_CURL_FAIL_ONCE=<suffix> drops
+// the first request whose URL ends in it, STUB_CONTABO_STATUS / STUB_CONTABO_ADDONS shape the instance list.
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 

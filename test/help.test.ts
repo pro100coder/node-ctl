@@ -1,25 +1,18 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { main } from '../src/cli.ts';
-import { PAGES } from '../src/help.ts';
-import { Sink } from './helpers.ts';
+import { COMMANDS } from '../src/cli.ts';
+import { PAGES, USAGE } from '../src/help.ts';
 
-// The bash CLI is the oracle for every text help prints, until T07 deletes it. Only paths that end
-// before anything is read or run: help, a page, an unknown command, no command.
-const bash = join(import.meta.dir, '..', 'node-ctl');
+test('there is a page for every dispatched command and help, and none for anything else', () => {
+  expect(Object.keys(PAGES).sort()).toEqual([...COMMANDS, 'help'].sort());
+});
 
-test.skipIf(!existsSync(bash))('help, the pages and the usage errors are byte for byte those of the bash CLI', async () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'node-ctl-parity-'));
-  const env = { ...process.env, NODE_CTL_LOG: join(tmp, 'log'), NODE_CTL_CONFIG: join(tmp, 'missing.yaml'), SERVERS_DIR: join(tmp, 'servers') };
-  const cases = [[], ['help'], ['--help'], ['-h'], ['frobnicate'], ['help', 'frobnicate'], ['frobnicate', '--help']];
-  for (const c of Object.keys(PAGES)) cases.push(['help', c], [c, '--help']);
-  for (const argv of cases) {
-    const p = Bun.spawnSync([bash, ...argv], { env, stdin: 'ignore' });
-    const stdout = new Sink();
-    const stderr = new Sink();
-    const code = await main(argv, { stdout, stderr, env: {}, terminal: false });
-    expect({ argv, code, out: stdout.text, err: stderr.text }).toEqual({ argv, code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() });
-  }
+test('the usage lists every dispatched command, each at the start of its own line', () => {
+  const listed = USAGE.split('\n').flatMap((l) => /^ {2}([a-z]+)\b/.exec(l)?.[1] ?? []);
+  expect([...new Set(listed)].sort()).toEqual([...COMMANDS].sort());
+});
+
+// The texts themselves: a change to what help prints shows up in the snapshot's diff, where it is reviewed.
+test('the usage and every page read as recorded', () => {
+  expect(USAGE).toMatchSnapshot();
+  for (const c of Object.keys(PAGES).sort()) expect(PAGES[c]).toMatchSnapshot(c);
 });

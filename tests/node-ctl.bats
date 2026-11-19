@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
-# ./node-ctl against stubbed terraform/ssh and a test HTTP server: inventory edits, command ordering, rendered remote scripts.
+# node-ctl against stubbed terraform/ssh and a test HTTP server: inventory edits, command ordering, rendered remote scripts.
 
 # The suite drives the compiled binary: setup_file builds dist/node-ctl once per run (not when no source is
 # newer than it) and tests/stubs/node-ctl-bin runs it against tests/stubs/http-server.ts. NODE_CTL_BIN
-# points the same suite elsewhere: the bash ./node-ctl (curl stub, sleep stub, node stub) or another binary.
+# points the same suite at another binary (a release, say).
 setup_file() {
   local root=$BATS_TEST_DIRNAME/..
   if [ -z "${NODE_CTL_BIN:-}" ]; then
@@ -28,7 +28,6 @@ setup() {
   export SSH_PUBLIC_KEY_FILE="$BATS_TEST_TMPDIR/key.pub"
   export SSH_DIR="$BATS_TEST_TMPDIR/ssh" # never the caller's own ~/.ssh
   export ORCA_PROFILES="$BATS_TEST_TMPDIR/orca" # never the caller's own Orca host-key stores
-  export BIN_DIR="$BATS_TEST_TMPDIR/bin" # never the caller's own ~/.local/bin
   export SKILLS_DIR="$BATS_TEST_TMPDIR/skills" # never the caller's own ~/.claude/skills
   export CLAUDE_DIR="$BATS_TEST_TMPDIR/claude" # never the caller's own ~/.claude
   export CLAUDE_JSON="$BATS_TEST_TMPDIR/claude.json" # never the caller's own MCP servers
@@ -41,12 +40,11 @@ setup() {
   echo "ssh-ed25519 AAAAgit node-ctl-user commit key" > "$GIT_KEY_FILE.pub"
   export PATH="$BATS_TEST_DIRNAME/stubs:$PATH"
   export NODE_CTL_HOME="$BATS_TEST_TMPDIR/home" # never the caller's own ~/.node-ctl
-  # a script (the bash CLI) runs as it is; a binary goes through the wrapper that gives it a test HTTP server
-  if [ "$(head -c 2 "$NODE_CTL_BIN")" = '#!' ]; then RAE=$NODE_CTL_BIN; else RAE="$BATS_TEST_DIRNAME/stubs/node-ctl-bin"; fi
+  RAE="$BATS_TEST_DIRNAME/stubs/node-ctl-bin" # the binary, through the wrapper that gives it a test HTTP server
   : > "$STUB_LOG"
-  # A complete configuration: one Hetzner account (stop/start/resize call the API through scripts/,
-  # the curl stub answers), a working OAuth client (create/start free the tailnet name through
-  # scripts/tailscale-rm.sh) and archive storage; check/init tests edit it for the missing/rejected paths.
+  # A complete configuration: one Hetzner account (stop/start/resize call its API, the test server
+  # answers), a working OAuth client (create/start free the tailnet name through the Tailscale API) and
+  # archive storage; check/init tests edit it for the missing/rejected paths.
   config
 }
 
@@ -59,10 +57,9 @@ cfg() { yq "$1" "$NODE_CTL_CONFIG"; } # a value of the configuration the CLI wro
 
 inv() { jq -r "${@:2}" "$SERVERS_DIR/$1.json"; }
 line_of() { grep -n -F -- "$1" "$STUB_LOG" | tail -1 | cut -d: -f1; }
-ev() { jq -cr "$1" "$STUB_EVENTS"; } # the JSON events of the run (NODE_CTL_EVENTS for the binary, the node stub's capture for bash)
+ev() { jq -cr "$1" "$STUB_EVENTS"; } # the JSON events of the run (NODE_CTL_EVENTS)
 id_of() { ev "select(.event_type == \"started\" and .action_name == \"$1\") | .action_id" | head -1; }
 said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]; } # in what it printed or in what an action reported
-bash_cli() { [ "$RAE" = "$NODE_CTL_BIN" ]; } # the bash ./node-ctl, whose renderer is a node process: what only it does is asserted for it alone
 
 @test "create writes the inventory entry with defaults, applies and waits" {
   run "$RAE" create dev1
@@ -141,7 +138,7 @@ bash_cli() { [ "$RAE" = "$NODE_CTL_BIN" ]; } # the bash ./node-ctl, whose render
   [ "$status" -eq 0 ]
   grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
   [ "$(line_of 'device/111')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
-  [ "$(grep -c "http: .*api.tailscale.com" "$STUB_LOG")" -eq 3 ] # token, list, delete (the bash script also bounds each with --max-time/--retry: a stall must not hang create; the binary's timeout is a unit test)
+  [ "$(grep -c "http: .*api.tailscale.com" "$STUB_LOG")" -eq 3 ] # token, list, delete (a stall must not hang create: the timeout of each call is a unit test)
 }
 
 @test "create never deletes a live node that only shares the raw OS hostname under a different tailnet name" {
@@ -726,7 +723,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 0 ]
   [ "$(inv dev1 .volume_size)" = 40 ]
   [ "$(line_of 'terraform: -chdir=terraform apply')" -lt "$(line_of 'node-ctl-user@dev1 sudo bash -s')" ]
-  grep -q -F '/mnt/volume' "$STUB_LOG" # scripts/mount-volume.sh went over ssh
+  grep -q -F '/mnt/volume' "$STUB_LOG" # mount-volume.sh went over ssh
   [[ $output == *"dev1: 40G at /mnt/volume"* ]] || false
   run "$RAE" volume dev1 50
   [ "$status" -eq 1 ]
@@ -774,8 +771,8 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   ! grep -q "terraform" "$STUB_LOG" || false
 }
 
-# The curl stub answers every request with this body, so it carries the fields tailscale-rm.sh and
-# poweron.sh need too.
+# The test server answers every request with this body, so it carries the fields the tailnet cleanup and
+# the power-on need too.
 # dev1's disk is 40G (primary_disk_size), so cx11 with its 20G disk is out too.
 # locations[].available is the only availability Hetzner still answers (/datacenters is 410 Gone):
 # nbg1 takes a ccx13 and refuses a cx43, for a resize and a start alike.
@@ -1336,9 +1333,9 @@ types() {
 }
 
 @test "every command has a --help page, answered before the config is read and without touching anything" {
-  # the dispatch line is the list of commands: one added there without a page fails here
-  cmds=$(grep -E '^  create\|.*\) "cmd_\$cmd"' "$BATS_TEST_DIRNAME/../node-ctl" | cut -d')' -f1 | tr '|' ' ')
-  [ -n "$cmds" ]
+  # the dispatch table is the list of commands: one added there without a page fails here
+  cmds=$(cd "$BATS_TEST_DIRNAME/.." && bun -e 'const { COMMANDS } = await import("./src/cli.ts"); console.log(COMMANDS.join(" "))')
+  [ "$(wc -w <<< "$cmds")" -gt 20 ]
   export NODE_CTL_CONFIG=$BATS_TEST_TMPDIR/missing.yaml
   for c in $cmds help; do
     for h in --help -h; do
@@ -1391,9 +1388,8 @@ types() {
   for name in Host terraform ssh restic "$NODE_CTL_CONFIG" accounts tailscale.client_id "Hetzner token (main)" "restic repository" Credentials "Tailscale on this host" Tailnet; do
     grep -qxF "$name" <<< "$completed" || false
   done
-  if ! bash_cli; then # the binary reads YAML, edits JSON and calls the APIs itself: none of these is needed on the host
-    for name in jq yq curl node; do ! grep -qxF "$name" <<< "$completed" || false; done
-  fi
+  # the binary reads YAML, edits JSON and calls the APIs itself: none of these is needed on the host
+  for name in jq yq curl node; do ! grep -qxF "$name" <<< "$completed" || false; done
   [ "$(ev 'select(.event_type == "log" and .action_name == "accounts") | .message')" = hetzner/main ] # the accounts, by provider and tag
   [ "$(ev 'select(.event_type == "planned") | [.index, .total_steps] | @csv' | paste -s -d ' ' -)" = "1,4 2,4 3,4 4,4" ]
   grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer t$" "$STUB_LOG"
@@ -1538,19 +1534,15 @@ contabo  cb       1" ]
   answers main tok2 ""
   run "$RAE" init hetzner < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  # The step opens the renderer, the first question closes it, the check that follows opens it again:
-  # one long-lived renderer (what it was before) would leave exactly one.
-  if bash_cli; then [ "$(grep -c '^node: ' "$STUB_LOG")" -ge 2 ]; fi
-  [ "$(ev 'select(.event_type == "completed" and .action_name == "Hetzner token (main)")' | wc -l)" -eq 1 ] # and no event is lost across the restart
-  if ! bash_cli; then # what that is for, as plain lines: the step, then the question, then the check, none inside another
-    answers main tok3 ""
-    NODE_CTL_PROGRESS=plain run "$RAE" init hetzner < "$BATS_TEST_TMPDIR/answers"
-    [ "$status" -eq 0 ]
-    n() { grep -n -F -- "$1" <<< "$output" | head -1 | cut -d: -f1; }
-    [ "$(n 'START hetzner')" -lt "$(n 'Hetzner account: a short tag')" ]
-    [ "$(n 'Hetzner account: a short tag')" -lt "$(n 'START Hetzner token (main)')" ]
-    grep -qx 'Hetzner account: a short tag.*' <<< "$output" # a line of its own
-  fi
+  [ "$(ev 'select(.event_type == "completed" and .action_name == "Hetzner token (main)")' | wc -l)" -eq 1 ] # and no event is lost across the question
+  # as plain lines: the step, then the question, then the check, none inside another
+  answers main tok3 ""
+  NODE_CTL_PROGRESS=plain run "$RAE" init hetzner < "$BATS_TEST_TMPDIR/answers"
+  [ "$status" -eq 0 ]
+  n() { grep -n -F -- "$1" <<< "$output" | head -1 | cut -d: -f1; }
+  [ "$(n 'START hetzner')" -lt "$(n 'Hetzner account: a short tag')" ]
+  [ "$(n 'Hetzner account: a short tag')" -lt "$(n 'START Hetzner token (main)')" ]
+  grep -qx 'Hetzner account: a short tag.*' <<< "$output" # a line of its own
 }
 
 @test "accounts edit replaces the credentials of a tag that already works" {
@@ -1926,12 +1918,6 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [ "$status" -eq 0 ]
   grep -q "ssh-keygen: -q -t ed25519 -C node-ctl-user commit key -f $GIT_KEY_FILE" "$STUB_LOG" # no -N: the passphrase is asked on the terminal, not put in the process list
   [ -f "$GIT_KEY_FILE" ]
-  # the renderer is drained and gone while ssh-keygen owns the terminal, and restarted afterwards,
-  # so its passphrase prompt cannot land in the middle of the step's own lines
-  if bash_cli; then
-    [ "$(grep -c 'node: progress/src/cli.ts' "$STUB_LOG")" -gt 1 ]
-    [ "$(line_of 'ssh-keygen:')" -lt "$(line_of 'node: progress/src/cli.ts')" ]
-  fi
   [[ $(ev 'select(.action_name == "gitkey" and .event_type == "log") | .message') == *"ssh-ed25519 AAAAgit node-ctl-user commit key"* ]] || false
   : > "$STUB_LOG"; : > "$STUB_EVENTS"
   run "$RAE" init gitkey
@@ -2072,16 +2058,16 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 @test "--progress selects the renderer, auto is plain off a terminal, and rejects other values" {
   NODE_CTL_PROGRESS=auto run "$RAE" check
   [ "$status" -eq 0 ]
-  if bash_cli; then grep -q "node: progress/src/cli.ts --progress=plain" "$STUB_LOG"; else [[ $output == *"[1/4 host] START Host"* ]] || false; fi
+  [[ $output == *"[1/4 host] START Host"* ]] || false
   : > "$STUB_LOG"; : > "$STUB_EVENTS"
   run "$RAE" --progress=json check
   [ "$status" -eq 0 ]
   [ "$(ev 'select(.event_type == "started") | .action_name' | head -1)" = Host ]
-  if bash_cli; then grep -q "node: progress/src/cli.ts --progress=json" "$STUB_LOG"; else [[ $output != *"START Host"* ]] || false; fi
+  [[ $output != *"START Host"* ]] || false
   : > "$STUB_LOG"
   NODE_CTL_PROGRESS=tty run "$RAE" check
   [ "$status" -eq 0 ]
-  if bash_cli; then grep -q "node: progress/src/cli.ts --progress=tty" "$STUB_LOG"; else [[ $output == *"✓ [1/4] Host"* && $output != *"START Host"* ]] || false; fi
+  [[ $output == *"✓ [1/4] Host"* && $output != *"START Host"* ]] || false
   run "$RAE" --progress=fancy list
   [ "$status" -eq 1 ]
   [[ $output == *"--progress must be"* ]] || false
@@ -2089,7 +2075,6 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   run bash -c "'$RAE' list 2>&1 >/dev/null"
   [ -z "$output" ] # no actions, no renderer
   [ ! -s "$STUB_EVENTS" ]
-  ! grep -q "src/cli.ts" "$STUB_LOG" || false
 }
 
 @test "Ctrl+C turns the open actions into cancelled and exits 130" {
@@ -2129,30 +2114,16 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 
 @test "the renderer draws past the log and writes the log its own stamped lines, on a terminal and in a pipe" {
   stamped='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8} \[1/4 host\] START Host$'
-  if bash_cli; then
-    out=$(NODE_CTL_PROGRESS=auto STUB_NODE_DRAW=LIVE-REGION script -q /dev/null "$RAE" check </dev/null)
-    [[ $out == *LIVE-REGION* ]] || false
-    grep -q -F -- "node: progress/src/cli.ts --progress=tty --log=$NODE_CTL_LOG" "$STUB_LOG"
-    ! grep -q LIVE-REGION "$NODE_CTL_LOG" || false
-  else
-    out=$(NODE_CTL_PROGRESS=auto script -q /dev/null "$RAE" check </dev/null)
-    [[ $out == *$'\e['*"Host"* && $out != *"START Host"* ]] || false # a live region on the terminal
-    grep -qE "$stamped" "$NODE_CTL_LOG" # the log gets plain lines with their time
-    ! grep -q $'\e' "$NODE_CTL_LOG" || false # and none of the drawing
-  fi
+  out=$(NODE_CTL_PROGRESS=auto script -q /dev/null "$RAE" check </dev/null)
+  [[ $out == *$'\e['*"Host"* && $out != *"START Host"* ]] || false # a live region on the terminal
+  grep -qE "$stamped" "$NODE_CTL_LOG" # the log gets plain lines with their time
+  ! grep -q $'\e' "$NODE_CTL_LOG" || false # and none of the drawing
   grep -q '=== node-ctl check' "$NODE_CTL_LOG"
   : > "$STUB_LOG"; : > "$NODE_CTL_LOG"
-  if bash_cli; then
-    NODE_CTL_PROGRESS=auto STUB_NODE_DRAW=PLAIN-LINES run "$RAE" check # an autostop job or a script: plain lines on stderr, a log with times
-    [[ $output == *PLAIN-LINES* ]] || false
-    grep -q -F -- "node: progress/src/cli.ts --progress=plain --log=$NODE_CTL_LOG" "$STUB_LOG"
-    ! grep -q PLAIN-LINES "$NODE_CTL_LOG" || false
-  else
-    NODE_CTL_PROGRESS=auto run "$RAE" check
-    [[ $output == *"[1/4 host] START Host"* ]] || false
-    ! grep -qE '^[0-9-]+ [0-9:]+ ' <<< "$output" || false # stderr has no times
-    grep -qE "$stamped" "$NODE_CTL_LOG"
-  fi
+  NODE_CTL_PROGRESS=auto run "$RAE" check # an autostop job or a script: plain lines on stderr, a log with times
+  [[ $output == *"[1/4 host] START Host"* ]] || false
+  ! grep -qE '^[0-9-]+ [0-9:]+ ' <<< "$output" || false # stderr has no times
+  grep -qE "$stamped" "$NODE_CTL_LOG"
 }
 
 @test "a log past 10 MB becomes node-ctl.log.1, replacing the previous one, and the run starts a new log" {
@@ -2211,20 +2182,6 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [ "$status" -eq 0 ]
   [ -L "$SKILLS_DIR/node-ctl-migrate" ]
   grep -q "^disable-model-invocation: true" "$SKILLS_DIR/node-ctl-migrate/SKILL.md" # only ever invoked by hand
-  if bash_cli; then # the bash CLI also links itself onto PATH; the binary is put there by install.sh
-    [ "$(readlink "$BIN_DIR/node-ctl")" = "$(cd "$(dirname "$RAE")" && pwd)/node-ctl" ]
-    [ "$(readlink "$SKILLS_DIR/node-ctl-migrate")" = "$(cd "$(dirname "$RAE")" && pwd)/skills/node-ctl-migrate" ]
-    run "$BIN_DIR/node-ctl" list
-    [ "$status" -eq 0 ]
-    rm "$BIN_DIR/node-ctl"; echo other > "$BIN_DIR/node-ctl"
-    answers ""
-    run "$RAE" init link < "$BATS_TEST_TMPDIR/answers"
-    [ "$status" -eq 0 ]
-    [ "$(cat "$BIN_DIR/node-ctl")" = other ]
-    [ -L "$SKILLS_DIR/node-ctl-migrate" ] # the other link is still made
-    [[ $(ev 'select(.event_type == "warning") | .message') == *"is not a symlink; left alone"* ]] || false
-    : > "$STUB_EVENTS"
-  fi
   rm "$SKILLS_DIR/node-ctl-migrate"; echo other > "$SKILLS_DIR/node-ctl-migrate"
   answers ""
   run "$RAE" init link < "$BATS_TEST_TMPDIR/answers"
@@ -2233,61 +2190,16 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [[ $(ev 'select(.event_type == "warning") | .message') == *"node-ctl-migrate exists and is not a symlink; left alone"* ]] || false
 }
 
-@test "init unpacks the skill into NODE_CTL_HOME, links it there, and links no node-ctl into BIN_DIR" {
-  ! bash_cli || skip "the bash CLI links the skill of its checkout, and itself"
+@test "init unpacks the skill into NODE_CTL_HOME, links it there, and links no node-ctl onto PATH" {
   blank
   answers "" tok "" ""
-  run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
+  mkdir -p "$BATS_TEST_TMPDIR/user"
+  HOME="$BATS_TEST_TMPDIR/user" run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
   [ "$(readlink "$SKILLS_DIR/node-ctl-migrate")" = "$NODE_CTL_HOME/skills/node-ctl-migrate" ]
   cmp "$NODE_CTL_HOME/skills/node-ctl-migrate/SKILL.md" "$BATS_TEST_DIRNAME/../skills/node-ctl-migrate/SKILL.md"
-  [ ! -e "$BIN_DIR/node-ctl" ]
-  [ ! -L "$BIN_DIR/node-ctl" ]
-}
-
-@test "a node-ctl edited while a command runs is not read past its dispatch" {
-  [ "$RAE" = "$NODE_CTL_BIN" ] || skip "about bash reading its own script; a compiled binary has no such file"
-  # bash reads a script as it goes: when the file grew under a running command, the bytes past the
-  # old end were executed as one more command once the last step finished
-  cp "$RAE" "$BATS_TEST_TMPDIR/node-ctl"
-  ln -s "$BATS_TEST_DIRNAME/../scripts" "$BATS_TEST_TMPDIR/scripts" # the copy cds to its own directory
-  mkdir "$BATS_TEST_TMPDIR/edit"
-  printf '#!/usr/bin/env bash\necho "echo edited-while-running" >> "%s"\n' "$BATS_TEST_TMPDIR/node-ctl" > "$BATS_TEST_TMPDIR/edit/terraform"
-  chmod +x "$BATS_TEST_TMPDIR/edit/terraform"
-  PATH="$BATS_TEST_TMPDIR/edit:$PATH" run "$BATS_TEST_TMPDIR/node-ctl" apply
-  [ "$status" -eq 0 ]
-  [[ $output != *edited-while-running* ]] || false
-}
-
-@test "the create price list is what a location will take, not what it prices" {
-  # cx33 is priced in both locations and available in neither (the CX line); cax21 is available in
-  # one of the two it is priced in. Only locations[].available predicts a create: /datacenters (gone now)
-  # offered every CAX although Hetzner answers one with "unsupported location for server type".
-  export STUB_CURL_BODY='{"server_types":[
-    {"id":4,"name":"cx33","cores":8,"memory":16,"disk":80,"cpu_type":"shared",
-     "locations":[{"name":"nbg1","available":false},{"name":"fsn1","available":false}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"16.9000"}},{"location":"fsn1","price_monthly":{"gross":"16.4000"}}]},
-    {"id":9,"name":"cax21","cores":4,"memory":8,"disk":80,"cpu_type":"arm",
-     "locations":[{"name":"nbg1","available":true},{"name":"fsn1","available":false}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"6.9900"}},{"location":"fsn1","price_monthly":{"gross":"6.9900"}}]},
-    {"id":1,"name":"cx22","cores":2,"memory":4,"disk":40,"cpu_type":"shared",
-     "locations":[{"name":"nbg1","available":true},{"name":"fsn1","available":true}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"4.5100"}},{"location":"fsn1","price_monthly":{"gross":"4.5100"}}]},
-    {"id":7,"name":"cx11","cores":1,"memory":2,"disk":20,"cpu_type":"shared","deprecation":{"unavailable_after":"2024-01-01"},
-     "locations":[{"name":"nbg1","available":true}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"3.0000"}}]}]}'
-  run env HCLOUD_TOKEN=t "$BATS_TEST_DIRNAME/../scripts/server-types.sh" create
-  [ "$status" -eq 0 ]
-  [ "$output" = $'cx22\t2\t4\tshared\t40\t4.51\tfsn1,nbg1\ncax21\t4\t8\tarm\t80\t6.99\tnbg1' ]
-  # The same body read for a move of a 60G disk in nbg1 (it names no architecture, so all four share
-  # one): every type priced there is listed, deprecated or not, and only one that holds the disk and
-  # that nbg1 takes now says yes.
-  run env HCLOUD_TOKEN=t "$BATS_TEST_DIRNAME/../scripts/server-types.sh" move nbg1 cx22 60
-  [ "$status" -eq 0 ]
-  [ "$output" = $'cx11\t1\t2\tshared\t20\t3\tno\ncx22\t2\t4\tshared\t40\t4.51\tno\ncax21\t4\t8\tarm\t80\t6.99\tyes\ncx33\t8\t16\tshared\t80\t16.9\tno' ]
-  run env HCLOUD_TOKEN=t "$BATS_TEST_DIRNAME/../scripts/server-types.sh"
-  [ "$status" -eq 1 ]
-  [[ $output == *"usage: server-types.sh create | move"* ]] || false
+  [ ! -e "$BATS_TEST_TMPDIR/user/.local/bin/node-ctl" ] # install.sh puts the binary there, init never links one
+  [ ! -L "$BATS_TEST_TMPDIR/user/.local/bin/node-ctl" ]
 }
 
 @test "create asks for a tariff only on a terminal: off one the defaults stand and nothing is fetched" {
@@ -2298,7 +2210,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   ! grep -q server_types "$STUB_LOG" || false
 }
 
-# The price list a new machine is created from: the curl stub answers every request with this body,
+# The price list a new machine is created from: the test server answers every request with this body,
 # so it carries what free_tailnet_name and wait_ready need too. cx33 is sold in two locations, which
 # is the only case that asks a second question.
 create_types() {
@@ -2587,13 +2499,11 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
   [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev1.plist" ]
 }
 
-# The systemd path, forced on any host through NODE_CTL_PLATFORM, which only tests set. The bash CLI has
-# none (launchd only): these are the binary's, with no bats reference from bash (T06).
+# The systemd path, forced on any host through NODE_CTL_PLATFORM, which only tests set.
 linux() { NODE_CTL_PLATFORM=linux "$RAE" "$@"; }
 unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the systemd-run stub kept
 
 @test "on Linux start --till runs a transient user timer at that moment in UTC, which list shows and a start without --till drops" {
-  bash_cli && skip "launchd only in the bash CLI"
   "$RAE" create dev1; "$RAE" stop dev1; : > "$STUB_LOG"
   TZ=Europe/Berlin run linux start dev1 --till "2099-06-01 18:30"
   [ "$status" -eq 0 ]
@@ -2614,7 +2524,6 @@ unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the
 }
 
 @test "on Linux the timer runs the stop through this binary, and one that fires for a machine stopped since does nothing" {
-  bash_cli && skip "launchd only in the bash CLI"
   "$RAE" create dev1
   linux autostop dev1 2h
   : > "$STUB_LOG"
@@ -2629,7 +2538,6 @@ unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the
 }
 
 @test "on Linux autostop moves or drops the timer of a running machine" {
-  bash_cli && skip "launchd only in the bash CLI"
   "$RAE" create dev1; : > "$STUB_LOG"
   linux autostop dev1 2h
   TZ=UTC linux autostop dev1 "2099-06-01 18:30" # one timer per machine: the earlier one goes first
@@ -2645,7 +2553,6 @@ unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the
 }
 
 @test "on Linux --till and autostop refuse without a user manager or without linger, say how to fix it, and change nothing" {
-  bash_cli && skip "launchd only in the bash CLI"
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop dev2; : > "$STUB_LOG"
   STUB_NO_USER_MANAGER=1 run linux start dev2 --till 2h
   [ "$status" -eq 1 ]

@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# Test stub: retry loops must not wait for real, unless a test needs a command to be interruptible.
-[ -z "${STUB_SLEEP_REAL:-}" ] || exec /bin/sleep "$@"
