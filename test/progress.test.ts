@@ -145,3 +145,20 @@ test('slug is the first word, lowercase, as the bash slug made it', () => {
   expect(slug('Ünder')).toBe('nder'); // one character, one dash, and one leading dash goes (tr in a UTF-8 locale)
   expect(slug('Связь dev1')).toBe('action');
 });
+
+test('suspend closes the renderers, and the next event opens new ones: a question is not drawn under a live region', async () => {
+  const opened: Sink[] = [];
+  const p = new Progress(() => {
+    const out = new Sink();
+    opened.push(out);
+    return [new JsonRenderer(out)];
+  }, new Sink());
+  await p.withAction('Before', 'before', () => {});
+  p.suspend();
+  await p.withAction('After', 'after', () => {});
+  expect(opened).toHaveLength(2);
+  expect(opened.map((o) => o.lines().map((l) => (JSON.parse(l) as ActionEvent).action_name))).toEqual([
+    ['Before', 'Before'],
+    ['After', 'After'],
+  ]);
+});
