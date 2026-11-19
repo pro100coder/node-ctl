@@ -123,8 +123,8 @@ const stopPlan = (run: Run, name: string, ...then: string[]) =>
 // Why that machine is still running, in its provider's words.
 const stopFailed = (run: Run, name: string) =>
   onContabo(run, name)
-    ? `could not power ${name} off; retry: ./node-ctl stop ${name}`
-    : `could not snapshot the root disk of ${name}; it is powered off and nothing is lost, retry: ./node-ctl stop ${name}`;
+    ? `could not power ${name} off; retry: node-ctl stop ${name}`
+    : `could not snapshot the root disk of ${name}; it is powered off and nothing is lost, retry: node-ctl stop ${name}`;
 
 // --all stops every running machine; no name at all is a question (or a usage error), never all of them.
 export const stop = async (ctx: Ctx): Promise<number | void> => {
@@ -180,7 +180,7 @@ export const stop = async (ctx: Ctx): Promise<number | void> => {
   await apply(config, p, progress, env);
   if (failed.length) {
     const list = failed.join(' ');
-    throw new UserError(`could not stop: ${list}; they are still in the inventory as running and nothing is lost, retry: ./node-ctl stop ${list}`);
+    throw new UserError(`could not stop: ${list}; they are still in the inventory as running and nothing is lost, retry: node-ctl stop ${list}`);
   }
 };
 
@@ -246,8 +246,8 @@ export const start = async (ctx: Ctx): Promise<number | void> => {
   }
   const name = names[0]!;
   const { machine, account } = exists(config, p.servers, name);
-  if (machine.state === 'running') throw new UserError(`${name} is already running; if its start was cut short: ./node-ctl apply ${name}`);
-  if (machine.state === 'archived') throw new UserError(`${name} is archived; use: ./node-ctl restore ${name}`);
+  if (machine.state === 'running') throw new UserError(`${name} is already running; if its start was cut short: node-ctl apply ${name}`);
+  if (machine.state === 'archived') throw new UserError(`${name} is archived; use: node-ctl restore ${name}`);
   // There is no server to resize while a machine is stopped, only the snapshot of its disk: the type it
   // boots into is free to change here, as long as that type is sold in its location right now and its
   // disk holds the snapshot. Validated before the first action, not inside one.
@@ -260,10 +260,10 @@ export const start = async (ctx: Ctx): Promise<number | void> => {
   }
   const failure = await startSteps(run, name, retype ? type : '', till, 'Apply Terraform', `Wait for ${name}`);
   if (failure !== undefined) throw new UserError(failure);
-  await apply(config, p, progress, env, `./node-ctl apply ${name}`); // it finishes the start: wait_ready included
+  await apply(config, p, progress, env, `node-ctl apply ${name}`); // it finishes the start: wait_ready included
   if (!(await waitReady(run, name))) return 1;
   await catoAfterStart(run, name);
-  ctx.io.stdout.write(`ready: ./node-ctl ssh ${name}\n`);
+  ctx.io.stdout.write(`ready: node-ctl ssh ${name}\n`);
 };
 
 // One apply for all of them; one that cannot be prepared stays stopped.
@@ -271,8 +271,8 @@ async function startMany(ctx: Ctx, run: Run, names: string[], till: number | und
   const { p, config, progress, env } = run;
   for (const name of names) {
     const { state } = exists(config, p.servers, name).machine; // before the first action
-    if (state === 'archived') throw new UserError(`${name} is archived; use: ./node-ctl restore ${name}`);
-    if (state !== 'stopped') throw new UserError(`${name} is already running; if its start was cut short: ./node-ctl apply ${name}`);
+    if (state === 'archived') throw new UserError(`${name} is archived; use: node-ctl restore ${name}`);
+    if (state !== 'stopped') throw new UserError(`${name} is already running; if its start was cut short: node-ctl apply ${name}`);
   }
   progress.plan(...names.map((n) => `Start ${n}`), 'Apply Terraform', ...names.map((n) => `Wait for ${n}`));
   const started: string[] = [];
@@ -284,13 +284,13 @@ async function startMany(ctx: Ctx, run: Run, names: string[], till: number | und
     });
     (ok ? started : failed).push(name);
   }
-  const why = () => `could not start: ${failed.join(' ')}; they are still stopped, retry: ./node-ctl start ${failed.join(' ')}`;
+  const why = () => `could not start: ${failed.join(' ')}; they are still stopped, retry: node-ctl start ${failed.join(' ')}`;
   if (!started.length) throw new UserError(why());
-  await apply(config, p, progress, env, `./node-ctl apply ${started.join(' ')}`);
+  await apply(config, p, progress, env, `node-ctl apply ${started.join(' ')}`);
   for (const name of started) {
     if (!(await waitReady(run, name))) continue;
     await catoAfterStart(run, name);
-    ctx.io.stdout.write(`ready: ./node-ctl ssh ${name}\n`);
+    ctx.io.stdout.write(`ready: node-ctl ssh ${name}\n`);
   }
   if (failed.length) throw new UserError(why());
 }

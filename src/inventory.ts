@@ -103,7 +103,7 @@ export function exists(c: Config, servers: string, name: string) {
     throw new UserError(`${name} has no account: add "account": "<tag>" to ${file(servers, name)} (tags in ${c.file}: ${accounts(c).join(' ')})`);
   }
   const found = account(c, tag);
-  if (!found) throw new UserError(`no account ${tag} in ${c.file}, which ${name} belongs to; ./node-ctl init`);
+  if (!found) throw new UserError(`no account ${tag} in ${c.file}, which ${name} belongs to; node-ctl init`);
   return { machine, account: found };
 }
 

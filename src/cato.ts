@@ -102,7 +102,7 @@ async function catoLogin(run: Run, name: string): Promise<string | undefined> {
 // A start signs the machine in again; a failure is a warning, the start stands, and cato <name> retries.
 export async function catoAfterStart(run: Run, name: string): Promise<void> {
   const failed = await catoLogin(run, name);
-  if (failed !== undefined) run.progress.warn(`${failed || `Cato is not connected on ${name}`}; retry: ./node-ctl cato ${name}`);
+  if (failed !== undefined) run.progress.warn(`${failed || `Cato is not connected on ${name}`}; retry: node-ctl cato ${name}`);
 }
 
 export const cato = async (ctx: Ctx): Promise<number | void> => {
@@ -115,10 +115,10 @@ export const cato = async (ctx: Ctx): Promise<number | void> => {
   const m = readMachine(run.p.servers, name!);
   if (m.state !== 'running') throw new UserError(`${name} is not running`);
   if (rest.length === 0) {
-    if (!m.cato) throw new UserError(`${name} has no Cato account yet: ./node-ctl cato ${name} <account> <user>`);
+    if (!m.cato) throw new UserError(`${name} has no Cato account yet: node-ctl cato ${name} <account> <user>`);
   } else if (rest.length === 2) {
     editMachine(run.p.servers, name!, (e) => (e.cato = { account: rest[0]!, user: rest[1]! }));
-  } else throw new UserError('usage: ./node-ctl cato <name> [account user]');
+  } else throw new UserError('usage: node-ctl cato <name> [account user]');
   const failed = await catoLogin(run, name!);
   if (failed !== undefined) throw new UserError(failed || `Cato sign-in failed on ${name}`);
   ctx.io.stdout.write(`Cato connected on ${name}\n`);

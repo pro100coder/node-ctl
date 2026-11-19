@@ -162,7 +162,7 @@ export async function createImage(env: Env, token: string, name: string, say: (l
     if ((await status(env, token, `/v1/images/${String(image)}`, 'image')) === 'available') return String(image);
     await sleep(5000, env);
   }
-  throw new Error(`image ${String(image)} of ${name} is still being written; ./node-ctl stop ${name} waits for it again`);
+  throw new Error(`image ${String(image)} of ${name} is still being written; node-ctl stop ${name} waits for it again`);
 }
 
 // image.sh prune: every snapshot of the machine but the one to keep; say() gets each deletion.

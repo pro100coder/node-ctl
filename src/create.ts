@@ -23,7 +23,7 @@ const USAGE = '<name> [--account tag] [--type cx23] [--location nbg1] [--size GB
 // The account of a new machine; asked on a terminal when there are several.
 async function pickAccount(ui: Ui, c: Config, given: string): Promise<string> {
   const tags = accounts(c);
-  if (!tags.length) throw new UserError(`no cloud account in ${c.file}: ./node-ctl init hetzner, or ./node-ctl init contabo`);
+  if (!tags.length) throw new UserError(`no cloud account in ${c.file}: node-ctl init hetzner, or node-ctl init contabo`);
   if (given) {
     if (!accountOf(c, given)) throw new UserError(`no account ${given} in ${c.file} (tags: ${tags.join(' ')})`);
     return given;
@@ -102,7 +102,7 @@ export const create = async (ctx: Ctx): Promise<number | void> => {
   const file = join(p.servers, `${name}.json`);
   if (await Bun.file(file).exists()) {
     if (args.length) {
-      throw new UserError(`${name} exists; options only apply to a new machine (edit ${file} and ./node-ctl apply, or ./node-ctl destroy ${name} first)`);
+      throw new UserError(`${name} exists; options only apply to a new machine (edit ${file} and node-ctl apply, or node-ctl destroy ${name} first)`);
     }
     return start({ ...ctx, args: [name] }); // a machine that exists is started, whatever its provider does for that
   }
@@ -132,7 +132,7 @@ export const create = async (ctx: Ctx): Promise<number | void> => {
       image = await contabo.image(run.env, config.contabo[tag]!);
     } catch (e) {
       ctx.io.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
-      throw new UserError(`could not look up the Contabo image for ${name}; ./node-ctl check`);
+      throw new UserError(`could not look up the Contabo image for ${name}; node-ctl check`);
     }
   } else if (!size) size = await askVolumeSize(ui);
   let ports = o.ports;
@@ -159,5 +159,5 @@ export const create = async (ctx: Ctx): Promise<number | void> => {
   });
   await apply(config, p, progress, run.env);
   if (!(await waitReady(run, name))) return 1;
-  ctx.io.stdout.write(`ready: ./node-ctl ssh ${name}\n`);
+  ctx.io.stdout.write(`ready: node-ctl ssh ${name}\n`);
 };

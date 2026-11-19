@@ -132,8 +132,8 @@ test('the server is deleted only once its snapshot is available: one that never 
   };
   const r = await run(['stop', 'dev1']);
   expect(r.code).toBe(1);
-  expect(r.err).toContain('could not snapshot the root disk of dev1; it is powered off and nothing is lost, retry: ./node-ctl stop dev1');
-  expect(r.events.some((e) => e.message === 'image 4711 of dev1 is still being written; ./node-ctl stop dev1 waits for it again')).toBe(true);
+  expect(r.err).toContain('could not snapshot the root disk of dev1; it is powered off and nothing is lost, retry: node-ctl stop dev1');
+  expect(r.events.some((e) => e.message === 'image 4711 of dev1 is still being written; node-ctl stop dev1 waits for it again')).toBe(true);
   expect(applies()).toBe(0); // Terraform would delete the VPS, and the snapshot being written with it
   expect(inv('dev1').state).toBe('running');
   expect(inv('dev1').image).toBeUndefined();
@@ -170,11 +170,11 @@ test('one machine that cannot be stopped does not keep the others running, and s
   };
   const r = await run(['stop', '--all']);
   expect(r.code).toBe(1);
-  expect(r.err).toContain('node-ctl: could not stop: dev2; they are still in the inventory as running and nothing is lost, retry: ./node-ctl stop dev2');
+  expect(r.err).toContain('node-ctl: could not stop: dev2; they are still in the inventory as running and nothing is lost, retry: node-ctl stop dev2');
   expect([inv('dev1').state, inv('dev2').state, inv('dev3').state]).toEqual(['stopped', 'running', 'stopped']);
   expect(applies()).toBe(1); // the one apply deletes the stopped ones' servers and leaves dev2's alone
   const failed = r.events.find((e) => e.event_type === 'failed' && e.action_name === 'Stop dev2');
-  expect(failed?.message).toBe('could not snapshot the root disk of dev2; it is powered off and nothing is lost, retry: ./node-ctl stop dev2');
+  expect(failed?.message).toBe('could not snapshot the root disk of dev2; it is powered off and nothing is lost, retry: node-ctl stop dev2');
 });
 
 // 5
@@ -263,10 +263,10 @@ test('a start cut short in its apply is finished by apply <name>, which waits fo
   machine('dev1', { state: 'stopped', image: '4711' });
   const cut = await run(['start', 'dev1'], { TF_RC: '1' });
   expect(cut.code).toBe(1);
-  expect(cut.err).toContain('fix the cause, then: ./node-ctl apply dev1');
+  expect(cut.err).toContain('fix the cause, then: node-ctl apply dev1');
   expect(inv('dev1').state).toBe('running');
   const again = await run(['start', 'dev1']);
-  expect(again.err).toContain('dev1 is already running; if its start was cut short: ./node-ctl apply dev1');
+  expect(again.err).toContain('dev1 is already running; if its start was cut short: node-ctl apply dev1');
   writeFileSync(rec, '');
   expect((await run(['apply', 'dev1'])).code).toBe(0);
   expect(recorded()).toContain('node-ctl-user@dev1 sudo cloud-init status --wait');

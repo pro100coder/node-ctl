@@ -12,7 +12,7 @@ export const ssh = async (ctx: Ctx): Promise<number> => {
   const args = await target(ctx, run.p.servers, 'ssh', ['running']);
   if (!(await reach(run))) return 1;
   const [name, ...rest] = args;
-  if (!name) throw new UserError('usage: ./node-ctl ssh <name> [cmd ...]');
+  if (!name) throw new UserError('usage: node-ctl ssh <name> [cmd ...]');
   const argv = tssh(`node-ctl-user@${await addr(name, ctx.io.env)}`, ...rest);
   return (await spawn(argv, { env: ctx.io.env, stdin: 'inherit', inherit: true })).status;
 };
@@ -69,7 +69,7 @@ export const load = async (ctx: Ctx): Promise<number | void> => {
   let mode = 'once';
   for (const a of ctx.args) {
     if (a === '-f' || a === '--follow') mode = ctx.io.terminal ? 'tty' : 'plain'; // a pipe gets plain lines, a terminal a redraw
-    else if (a.startsWith('-')) throw new UserError('usage: ./node-ctl load [-f] [name]');
+    else if (a.startsWith('-')) throw new UserError('usage: node-ctl load [-f] [name]');
     else name = a;
   }
   if (!(await reach(run))) return 1;

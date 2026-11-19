@@ -149,7 +149,7 @@ export const check: Handler = async ({ progress, io }) => {
   const p = paths(env);
   const config = loadConfig(p.config, env);
   const key = config.sshPublicKeyFile;
-  const again = 'then run ./node-ctl check again';
+  const again = 'then run node-ctl check again';
   const on = (t: string) => Boolean(Bun.which(t, { PATH: env.PATH ?? '' }));
   const g = new Probes(progress);
   progress.plan('Host', `Config ${p.config}`, 'Credentials', 'Tailnet');
@@ -163,20 +163,20 @@ export const check: Handler = async ({ progress, io }) => {
   );
   await progress.withAction(`Config ${p.config}`, 'config', () =>
     g.group(async () => {
-      await g.probe(p.config, '', 'missing: run ./node-ctl init', () => existsSync(p.config));
-      await g.probe('accounts', labels(config).join(' '), 'no account: run ./node-ctl init hetzner, or ./node-ctl init contabo', () => accounts(config).length > 0);
-      await g.probe('tailscale.client_id', '', 'empty: run ./node-ctl init', () => Boolean(config.tailscale.client_id));
-      await g.probe('tailscale.client_secret', '', 'empty: run ./node-ctl init', () => Boolean(config.tailscale.client_secret));
+      await g.probe(p.config, '', 'missing: run node-ctl init', () => existsSync(p.config));
+      await g.probe('accounts', labels(config).join(' '), 'no account: run node-ctl init hetzner, or node-ctl init contabo', () => accounts(config).length > 0);
+      await g.probe('tailscale.client_id', '', 'empty: run node-ctl init', () => Boolean(config.tailscale.client_id));
+      await g.probe('tailscale.client_secret', '', 'empty: run node-ctl init', () => Boolean(config.tailscale.client_secret));
       for (const [k, v] of Object.entries(config.restic)) {
-        await g.probe(`restic.${k}`, v ? '' : 'empty: archives disabled (./node-ctl init restic)', '', () => true);
+        await g.probe(`restic.${k}`, v ? '' : 'empty: archives disabled (node-ctl init restic)', '', () => true);
       }
     }),
   );
-  if (g.failed) throw new UserError(`fix the failed checks (or run ./node-ctl init), ${again}`);
+  if (g.failed) throw new UserError(`fix the failed checks (or run node-ctl init), ${again}`);
   const creds = await progress.withAction('Credentials', 'credentials', async () => {
     if (!(await probeCredentials(progress, config, env))) throw new ActionFailure('a credential was rejected');
   });
-  if (!creds) throw new UserError(`fix the failed checks (or run ./node-ctl init), ${again}`);
+  if (!creds) throw new UserError(`fix the failed checks (or run node-ctl init), ${again}`);
   const tailnet = await progress.withAction('Tailnet', 'tailnet', () =>
     g.group(async () => {
       const cli = tailscaleCli(env);

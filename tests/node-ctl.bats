@@ -70,7 +70,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   [ "$(inv dev1 -c .funnel)" = "{}" ]
   grep -q "terraform: -chdir=terraform apply -input=false -no-color -auto-approve" "$STUB_LOG"
   grep -q "node-ctl-user@dev1 sudo cloud-init status --wait" "$STUB_LOG"
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
 }
 
 @test "create honours options" {
@@ -168,18 +168,18 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   for c in start destroy ports expose backup archive restore ssh volume; do
     run "$RAE" $c
     [ "$status" -eq 1 ]
-    [[ $output == "node-ctl: usage: ./node-ctl $c <name"* ]] || false
+    [[ $output == "node-ctl: usage: node-ctl $c <name"* ]] || false
   done
   run "$RAE" create
   [ "$status" -eq 1 ]
-  [[ $output == "node-ctl: usage: ./node-ctl create <name>"* ]] || false
+  [[ $output == "node-ctl: usage: node-ctl create <name>"* ]] || false
 }
 
 @test "help goes to stdout with exit 0, version answers" {
   for h in --help -h help; do
     run bash -c "'$RAE' $h 2>/dev/null"
     [ "$status" -eq 0 ]
-    [[ $output == "usage: ./node-ctl "*"NODE_CTL_LOG"* ]] || false
+    [[ $output == "usage: node-ctl "*"NODE_CTL_LOG"* ]] || false
   done
   run "$RAE" --version
   [ "$status" -eq 0 ]
@@ -192,7 +192,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 @test "progress goes to stderr, only the result to stdout" {
   run bash -c "'$RAE' create dev1 2>/dev/null"
   [ "$status" -eq 0 ]
-  [ "$output" = "ready: ./node-ctl ssh dev1" ]
+  [ "$output" = "ready: node-ctl ssh dev1" ]
   run bash -c "'$RAE' create dev2 2>&1 >/dev/null"
   [[ $output != *"ready:"* ]] || false
   [ -n "$(id_of 'Wait for dev2')" ] # the narration went to the renderer, not to stdout
@@ -202,7 +202,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" create dev1
   STUB_TF_RC=1 run "$RAE" stop dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"terraform apply failed"*"./node-ctl apply"* ]] || false
+  [[ $output == *"terraform apply failed"*"node-ctl apply"* ]] || false
   [ "$(inv dev1 .state)" = stopped ]
 }
 
@@ -245,9 +245,9 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" create dev1; "$RAE" stop dev1
   STUB_TF_RC=1 run "$RAE" start dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"./node-ctl apply dev1"* ]] || false
+  [[ $output == *"node-ctl apply dev1"* ]] || false
   run "$RAE" start dev1
-  [[ $output == *"dev1 is already running"*"./node-ctl apply dev1"* ]] || false
+  [[ $output == *"dev1 is already running"*"node-ctl apply dev1"* ]] || false
   : > "$STUB_LOG"
   run "$RAE" apply dev1
   [ "$status" -eq 0 ]
@@ -295,7 +295,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   config '.hetzner.work = "t2"'
   # script(1) lends a pty, so the question is asked; the answer arrives once the prompt is up (an early EOF would discard it)
   run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --size 0 --type cx23"
-  [[ $output == *"1) main"*"2) work"*"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"1) main"*"2) work"*"ready: node-ctl ssh dev1"* ]] || false
   [ "$(inv dev1 .account)" = work ]
   run bash -c "(/bin/sleep 1; printf 'main\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev2 --size 0 --type cx23"
   [ "$(inv dev2 .account)" = main ]
@@ -307,9 +307,9 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 @test "create without a name asks it on a terminal, then the ports; off one the name is a usage error" {
   run "$RAE" create --size 0
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl create <name>"* ]] || false
+  [[ $output == *"usage: node-ctl create <name>"* ]] || false
   run bash -c "(/bin/sleep 1; printf 'dev1\n'; /bin/sleep 1; printf '80,443\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create --type cx23 --size 0"
-  [[ $output == *"Name of the new machine"*"Public TCP ports"*"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"Name of the new machine"*"Public TCP ports"*"ready: node-ctl ssh dev1"* ]] || false
   [ "$(inv dev1 -c .open_ports)" = "[22,80,443]" ]
   run bash -c "(/bin/sleep 1; printf 'Bad_Name\n'; /bin/sleep 1) | script -q /dev/null '$RAE' create"
   [[ $output == *"name must be lowercase"* ]] || false
@@ -320,7 +320,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" stop dev2
   run "$RAE" start # off a terminal its own usage error stands
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl start <name ...>"* ]] || false
+  [[ $output == *"usage: node-ctl start <name ...>"* ]] || false
   run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' start"
   [[ $output == *"1) all: every stopped machine"*"2) dev2"*stopped* && $output != *"3) "* ]] || false # the running ones cannot be started
   [ "$(inv dev2 .state)" = running ]
@@ -361,13 +361,13 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" stop --all
   run "$RAE" start
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl start <name ...> [--type [type]] [--till time] | --all"* ]] || false
+  [[ $output == *"usage: node-ctl start <name ...> [--type [type]] [--till time] | --all"* ]] || false
   run "$RAE" start dev1 dev2 --type cx33
   [[ $output == *"--type takes one machine"* ]] || false
   : > "$STUB_LOG"
   run "$RAE" start dev1 dev2
   [ "$status" -eq 0 ]
-  [[ $output == *"ready: ./node-ctl ssh dev1"*"ready: ./node-ctl ssh dev2"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"*"ready: node-ctl ssh dev2"* ]] || false
   [ "$(inv dev3 .state)" = stopped ]
   [ "$(grep -c 'terraform: -chdir=terraform apply' "$STUB_LOG")" -eq 1 ]
   run "$RAE" start dev1 dev3
@@ -421,7 +421,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   grep -q "terraform: -chdir=terraform/contabo init" "$STUB_LOG"
   grep -q "terraform: -chdir=terraform/contabo apply -input=false -no-color -auto-approve (workspace cb, account cb, contabo ci/u@e/pw)" "$STUB_LOG"
   grep -q "terraform: -chdir=terraform apply -input=false -no-color -auto-approve (workspace main, account main, token t)" "$STUB_LOG"
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
 }
 
 @test "a Contabo password with shell characters reaches the provider as it is" {
@@ -638,7 +638,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   : > "$STUB_LOG"
   run "$RAE" stop # off a terminal: a usage error, not every machine
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl stop <name ...> | --all"* ]] || false
+  [[ $output == *"usage: node-ctl stop <name ...> | --all"* ]] || false
   [ "$(inv dev1 .state)" = running ]
   run "$RAE" stop --all
   [ "$status" -eq 0 ]
@@ -671,7 +671,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 1 ]
   [ "$(inv dev1 .state)" = running ]
   [ "$(inv dev2 .state)" = running ]
-  [[ $output == *"retry: ./node-ctl stop dev1 dev2"* ]] || false
+  [[ $output == *"retry: node-ctl stop dev1 dev2"* ]] || false
 }
 
 @test "stop that cannot snapshot the root disk leaves the machine in the inventory as it was" {
@@ -680,7 +680,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 1 ]
   [ "$(inv dev1 .state)" = running ]
   [ "$(inv dev1 .image)" = null ]
-  [[ $output == *"retry: ./node-ctl stop dev1"* ]] || false
+  [[ $output == *"retry: node-ctl stop dev1"* ]] || false
   ! grep -q "terraform: -chdir=terraform apply" "$STUB_LOG" || false # the VPS is not deleted without its disk
 }
 
@@ -986,12 +986,12 @@ types() {
   [[ $output == *"must start with /"* ]] || false
   run "$RAE" expose dev1 http
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl expose <name> <port> [/path]"* ]] || false
+  [[ $output == *"usage: node-ctl expose <name> <port> [/path]"* ]] || false
   [ "$(inv dev1 -c .funnel)" = '{"/":8080}' ]
   ! grep -q "tailscale funnel" "$STUB_LOG" || false # nothing reached the machine
   run "$RAE" expose dev1 --rm
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl expose <name> --rm </path>"* ]] || false
+  [[ $output == *"usage: node-ctl expose <name> --rm </path>"* ]] || false
 }
 
 @test "expose on a stopped machine only edits the inventory; start then configures Funnel" {
@@ -1098,7 +1098,7 @@ types() {
   "$RAE" create dev2
   grep -qx "Host node-ctl-dev1" "$conf"
   grep -q "  User node-ctl-user" "$conf"
-  grep -q "  UserKnownHostsFile /dev/null" "$conf" # same host-key stance as ./node-ctl ssh
+  grep -q "  UserKnownHostsFile /dev/null" "$conf" # same host-key stance as node-ctl ssh
   "$RAE" stop dev2
   ! grep -qx "Host node-ctl-dev2" "$conf" || false # a stopped machine has no address to offer
   "$RAE" destroy dev1 --yes
@@ -1341,11 +1341,11 @@ types() {
     for h in --help -h; do
       run bash -c "'$RAE' $c $h 2>/dev/null"
       [ "$status" -eq 0 ]
-      [[ $output == "usage: ./node-ctl $c"* ]] || false
+      [[ $output == "usage: node-ctl $c"* ]] || false
     done
     run bash -c "'$RAE' help $c 2>/dev/null"
     [ "$status" -eq 0 ]
-    [[ $output == "usage: ./node-ctl $c"* ]] || false
+    [[ $output == "usage: node-ctl $c"* ]] || false
   done
   run "$RAE" create dev1 --type cx23 --help
   [ "$status" -eq 0 ]
@@ -1440,13 +1440,13 @@ types() {
   config '.tailscale.client_secret = ""'
   run "$RAE" check
   [ "$status" -eq 1 ]
-  [ "$(ev 'select(.event_type == "failed" and .action_name == "tailscale.client_secret") | .message')" = "empty: run ./node-ctl init" ]
+  [ "$(ev 'select(.event_type == "failed" and .action_name == "tailscale.client_secret") | .message')" = "empty: run node-ctl init" ]
   [[ $output == *"fix the failed checks"* ]] || false
   ! grep -q "http:" "$STUB_LOG" || false
   config '.hetzner = {}'
   run "$RAE" check
   [ "$status" -eq 1 ]
-  [ "$(ev 'select(.event_type == "failed" and .action_name == "accounts") | .message')" = "no account: run ./node-ctl init hetzner, or ./node-ctl init contabo" ]
+  [ "$(ev 'select(.event_type == "failed" and .action_name == "accounts") | .message')" = "no account: run node-ctl init hetzner, or node-ctl init contabo" ]
   ! grep -q "http:" "$STUB_LOG" || false
 }
 
@@ -1466,7 +1466,7 @@ types() {
   rm "$NODE_CTL_CONFIG"
   run "$RAE" check
   [ "$status" -eq 1 ]
-  [ "$(ev "select(.event_type == \"failed\" and .action_name == \"$NODE_CTL_CONFIG\") | .message")" = "missing: run ./node-ctl init" ]
+  [ "$(ev "select(.event_type == \"failed\" and .action_name == \"$NODE_CTL_CONFIG\") | .message")" = "missing: run node-ctl init" ]
 }
 
 # --- init ------------------------------------------------------------------------------------
@@ -1560,7 +1560,7 @@ contabo  cb       1" ]
   [[ $output == *"not a cloud: nope (hetzner, contabo)"* ]] || false
   run "$RAE" accounts bogus
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl accounts"* ]] || false
+  [[ $output == *"usage: node-ctl accounts"* ]] || false
 }
 
 @test "init asks step by step, verifies every group and writes node-ctl.yaml" {
@@ -1568,7 +1568,7 @@ contabo  cb       1" ]
   answers "" tok "" s3:https://e/b akid asec "" # the ssh key and the preset tailscale client verify and are kept
   run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [[ $output == *"done: ./node-ctl create dev1"* ]] || false
+  [[ $output == *"done: node-ctl create dev1"* ]] || false
   [ "$(cfg .hetzner.main)" = tok ]
   [ "$(cfg .tailscale.client_id)" = cid ]
   [ "$(cfg .restic.repository)" = "s3:https://e/b" ]
@@ -1689,7 +1689,7 @@ contabo  cb       1" ]
   answers "" tok "" ""
   run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [[ $output == *"done: ./node-ctl create dev1"* ]] || false
+  [[ $output == *"done: node-ctl create dev1"* ]] || false
   grep -q "terraform: -chdir=terraform apply -input=false -no-color -auto-approve (workspace main, account main, token tok)" "$STUB_LOG" # the ssh key is registered before the first create
   [ "$(cfg .restic.repository)" = "" ]
   ! grep -q "restic: cat config" "$STUB_LOG" || false
@@ -1700,7 +1700,7 @@ contabo  cb       1" ]
   config '.restic.repository = ""'
   run "$RAE" backup dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"restic.repository is not set"*"./node-ctl init"* ]] || false
+  [[ $output == *"restic.repository is not set"*"node-ctl init"* ]] || false
 }
 
 # --- ssh key in the agent --------------------------------------------------------------------
@@ -1906,7 +1906,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   rm "$GIT_KEY_FILE"
   run "$RAE" create dev1
   [ "$status" -eq 0 ]
-  [[ $output == *"has no commit key"*"./node-ctl init gitkey"* ]] || false
+  [[ $output == *"has no commit key"*"node-ctl init gitkey"* ]] || false
   ! grep -q 'id_ed25519' "$STUB_LOG" || false
 }
 
@@ -1963,7 +1963,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
     run "$RAE" create dev1
   [ "$status" -eq 0 ]
   said "failed only to set a password for the provider's admin user" || false
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
 }
 
 @test "a cloud-init that failed elsewhere too is still a failure" {
@@ -2095,7 +2095,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 @test "every run lands in the log with its output and exit status" {
   run "$RAE" create dev1
   grep -q '=== node-ctl create dev1' "$NODE_CTL_LOG"
-  grep -q 'ready: ./node-ctl ssh dev1' "$NODE_CTL_LOG"
+  grep -q 'ready: node-ctl ssh dev1' "$NODE_CTL_LOG"
   grep -q '=== exit 0' "$NODE_CTL_LOG"
   run "$RAE" stop nope
   grep -q 'no such machine: nope' "$NODE_CTL_LOG"
@@ -2366,10 +2366,10 @@ CATO_URL='https://sso.ias.catonetworks.com/login?ws=acme&redirect_uri=http://127
   "$RAE" create dev1
   run "$RAE" cato dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"no Cato account yet"*"./node-ctl cato dev1 <account> <user>"* ]] || false
+  [[ $output == *"no Cato account yet"*"node-ctl cato dev1 <account> <user>"* ]] || false
   run "$RAE" cato dev1 acme
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl cato"* ]] || false
+  [[ $output == *"usage: node-ctl cato"* ]] || false
   STUB_CATO_OUT='cato-sdp is not installed on dev1' STUB_CATO_RC=1 run "$RAE" cato dev1 acme me@example.com
   [ "$status" -eq 1 ]
   [[ $output == *"cato-sdp is not installed on dev1"* ]] || false
@@ -2386,14 +2386,14 @@ CATO_URL='https://sso.ias.catonetworks.com/login?ws=acme&redirect_uri=http://127
   "$RAE" stop dev1; : > "$STUB_LOG"
   STUB_CATO_OUT=$CATO_URL run "$RAE" start dev1
   [ "$status" -eq 0 ]
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
   [ "$(grep -n -- '--reset-cred' "$STUB_LOG" | head -1 | cut -d: -f1)" -gt "$(grep -n -F 'PRIVATE-TEST-KEY' "$STUB_LOG" | head -1 | cut -d: -f1)" ] # after the ready steps
   grep -qx "open: $CATO_URL" "$STUB_LOG"
   "$RAE" stop dev1; : > "$STUB_LOG"
   STUB_CATO_OUT="no login URL from cato-sdp after 60s:" STUB_CATO_RC=1 run "$RAE" start dev1 # no URL: a warning, the start stands
   [ "$status" -eq 0 ]
-  [[ $output == *"no login URL from cato-sdp"*"retry: ./node-ctl cato dev1"* ]] || false
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"no login URL from cato-sdp"*"retry: node-ctl cato dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
   "$RAE" create dev2
   "$RAE" stop dev2; : > "$STUB_LOG"
   run "$RAE" start dev2
@@ -2493,7 +2493,7 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
   [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev2.plist" ]
   run "$RAE" autostop dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl autostop <name> <time | off>"* ]] || false
+  [[ $output == *"usage: node-ctl autostop <name> <time | off>"* ]] || false
   run "$RAE" autostop dev1 soon
   [ "$status" -eq 1 ]
   [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev1.plist" ]

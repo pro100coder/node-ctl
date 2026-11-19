@@ -39,7 +39,7 @@ test('the machines on offer are those in the states the command acts on, aligned
 });
 
 test('nothing to pick, a cancelled menu and an answer off the list are errors that say so', async () => {
-  await expect(pickMachine(ui('1\n').u, servers(), 'start', ['archived'])).rejects.toThrow('no archived machine for start; ./node-ctl list');
+  await expect(pickMachine(ui('1\n').u, servers(), 'start', ['archived'])).rejects.toThrow('no archived machine for start; node-ctl list');
   await expect(pickMachine(ui('').u, servers(), 'ssh', [])).rejects.toThrow('aborted');
   await expect(pickMachine(ui('dev9\n').u, servers(), 'ssh', [])).rejects.toThrow('not a machine: dev9');
 });

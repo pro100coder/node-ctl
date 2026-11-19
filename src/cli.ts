@@ -108,7 +108,7 @@ export function parseGlobals(argv: string[]): { yes: boolean; progress: string |
 }
 
 function page(command: string): string {
-  if (!Object.hasOwn(PAGES, command)) throw new UserError(`unknown command: ${command} (./node-ctl --help lists them)`);
+  if (!Object.hasOwn(PAGES, command)) throw new UserError(`unknown command: ${command} (node-ctl --help lists them)`);
   return PAGES[command]!;
 }
 

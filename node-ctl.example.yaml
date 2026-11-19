@@ -1,10 +1,10 @@
-# node-ctl configuration. ./node-ctl init fills it in step by step; ./node-ctl check verifies it.
+# node-ctl configuration. node-ctl init fills it in step by step; node-ctl check verifies it.
 # Copied to node-ctl.yaml (gitignored: it holds every secret) on the first run of init.
 
 # Hetzner Cloud accounts: a tag of your choice -> API token of that project
 # (console -> project -> Security -> API tokens -> Generate API token, permission Read & Write).
 # One entry per project, e.g. `work: <token>` and `home: <token>`. Every machine belongs to one
-# (servers/<name>.json: "account"); with several, ./node-ctl create asks which, or takes --account <tag>.
+# (servers/<name>.json: "account"); with several, node-ctl create asks which, or takes --account <tag>.
 hetzner: {}
 
 # Contabo accounts (optional): a tag of your choice -> the API credentials of one customer account
@@ -34,7 +34,7 @@ restic:
   access_key_id: ""
   secret_access_key: ""
 
-# Defaults for ./node-ctl create (optional); per provider, since neither the types nor the
+# Defaults for node-ctl create (optional); per provider, since neither the types nor the
 # locations are the same (Hetzner cx23/nbg1, Contabo V45/EU)
 #defaults:
 #  type: cx23

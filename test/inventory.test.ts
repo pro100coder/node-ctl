@@ -98,6 +98,6 @@ test('exists refuses a machine with no entry, with no account, or of an account 
   expect(() => exists(c, dir, 'old')).toThrow(
     `old has no account: add "account": "<tag>" to ${dir}/old.json (tags in ${c.file}: main work)`,
   );
-  expect(() => exists(c, dir, 'gone')).toThrow(`no account nope in ${c.file}, which gone belongs to; ./node-ctl init`);
+  expect(() => exists(c, dir, 'gone')).toThrow(`no account nope in ${c.file}, which gone belongs to; node-ctl init`);
   expect(() => ensureAccounts(c, dir)).toThrow('no account nope'); // every machine, as apply guards the whole inventory
 });

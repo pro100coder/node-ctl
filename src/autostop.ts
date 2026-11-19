@@ -203,7 +203,7 @@ export const autostop = async (ctx: Ctx): Promise<void> => {
   const [name, when] = ctx.args;
   need('autostop', when, '<name> <time | off>');
   if (exists(run.config, run.p.servers, name!).machine.state !== 'running') {
-    throw new UserError(`${name} is not running; a start sets its autostop: ./node-ctl start ${name} --till <time>`);
+    throw new UserError(`${name} is not running; a start sets its autostop: node-ctl start ${name} --till <time>`);
   }
   if (when === 'off') {
     await scheduleStop(run, name!, undefined);

@@ -33,7 +33,7 @@ export async function pickMachine(ui: Ui, servers: string, command: string, stat
     if (states.length && !states.includes(m.state ?? '')) return [];
     return [[name, m.state ?? '', m.type ?? '', m.location ?? '', m.account ?? '']];
   });
-  if (!rows.length) throw new UserError(`no ${states.length ? `${states.join(' ')} ` : ''}machine for ${command}; ./node-ctl list`);
+  if (!rows.length) throw new UserError(`no ${states.length ? `${states.join(' ')} ` : ''}machine for ${command}; node-ctl list`);
   const m = menuList(columns(rows).join('\n'));
   if (all) {
     m.values.unshift('--all');

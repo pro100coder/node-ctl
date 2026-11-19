@@ -40,7 +40,7 @@ export const ports = async (ctx: Ctx): Promise<void> => {
   const [name, ...list] = await target(ctx, p.servers, 'ports', []);
   need('ports', name, '<name> [port ...]');
   const { machine } = exists(config, p.servers, name!);
-  // a bare call shows; closing everything is: ./node-ctl ports <name> 22
+  // a bare call shows; closing everything is: node-ctl ports <name> 22
   if (!list.length) return void ctx.io.stdout.write((machine.open_ports ?? []).map((n) => `${n}\n`).join(''));
   const open = portList(list);
   progress.plan('Write inventory', 'Apply Terraform');
@@ -64,7 +64,7 @@ export const expose = async (ctx: Ctx): Promise<number | void> => {
     path = need('expose', rest[1], '<name> --rm </path>');
     if (funnel[path] == null) throw new UserError(`nothing is published at ${path} on ${name}`);
   } else {
-    if (!/^[0-9]+$/.test(rest[0]!)) throw new UserError('usage: ./node-ctl expose <name> <port> [/path]');
+    if (!/^[0-9]+$/.test(rest[0]!)) throw new UserError('usage: node-ctl expose <name> <port> [/path]');
     port = Number(rest[0]);
     if (rest.length > 1) path = rest[1]!;
     if (!path.startsWith('/')) throw new UserError(`the path must start with /: ${path}`);
@@ -115,7 +115,7 @@ export const gitkey = async (ctx: Ctx): Promise<number | void> => {
   if (!(await reach(run))) return 1;
   const name = need('gitkey', args[0], '<name>');
   exists(run.config, run.p.servers, name);
-  if (!(await Bun.file(run.p.gitKey).exists())) throw new UserError(`no ${run.p.gitKey}: ./node-ctl init gitkey`);
+  if (!(await Bun.file(run.p.gitKey).exists())) throw new UserError(`no ${run.p.gitKey}: node-ctl init gitkey`);
   if (!running(run.p.servers, name)) throw new UserError(`${name} is not running`);
   if (!(await installGitKey(run, name))) return 1;
 };

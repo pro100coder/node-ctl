@@ -26,7 +26,7 @@ export function setup(ctx: Ctx): Run {
 
 // need "${1:-}" "<name> ...": a missing argument is a usage error.
 export function need(command: string, value: string | undefined, usage: string): string {
-  if (!value) throw new UserError(`usage: ./node-ctl ${command} ${usage}`);
+  if (!value) throw new UserError(`usage: node-ctl ${command} ${usage}`);
   return value;
 }
 

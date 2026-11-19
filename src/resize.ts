@@ -73,7 +73,7 @@ or one Hetzner will not move a server into right now, is marked no and the selec
         ? ['MOVE', '* current · no = Hetzner will not move it there now']
         : ['CREATE', '* current · no = too small for the snapshot, or not sold there now'];
     const picked = await pickType(ui, rows, current, last, hint);
-    if (picked === undefined) throw new UserError(`nothing to read a type from; pass one: ./node-ctl ${verb} ${name}${opt} <type>`);
+    if (picked === undefined) throw new UserError(`nothing to read a type from; pass one: node-ctl ${verb} ${name}${opt} <type>`);
     type = picked;
   }
   const choice = { current, location, disk, rows, type };
@@ -81,7 +81,7 @@ or one Hetzner will not move a server into right now, is marked no and the selec
   if (rows.some((r) => r.name === type)) {
     throw new UserError(`${name} cannot ${how} ${type} in ${location}: its disk is smaller than ${disk}G, or Hetzner will not take it there right now (no in the list)`);
   }
-  throw new UserError(`${name} cannot ${how} '${type}' in ${location}; ./node-ctl ${verb} ${name}${opt} lists the types that work`);
+  throw new UserError(`${name} cannot ${how} '${type}' in ${location}; node-ctl ${verb} ${name}${opt} lists the types that work`);
 }
 
 // Hetzner resizes a powered-off server, which Terraform does: the machine reboots, the tailnet address survives.

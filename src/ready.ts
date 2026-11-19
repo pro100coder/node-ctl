@@ -43,10 +43,10 @@ async function waitLoop(run: Run, name: string): Promise<void> {
     if (onlyPasswords((await batch('sudo cloud-init status --format json || true')).stdout)) {
       return progress.warn(`cloud-init on ${name} failed only to set a password for the provider's admin user, which node-ctl-user replaces`);
     }
-    throw new UserError(`cloud-init failed on ${name}; see: ./node-ctl ssh ${name} cat /var/log/cloud-init-output.log`);
+    throw new UserError(`cloud-init failed on ${name}; see: node-ctl ssh ${name} cat /var/log/cloud-init-output.log`);
   }
   throw new UserError(
-    `${name} is not reachable over the tailnet: ${err || 'no answer'}\n  (Tailscale off or MagicDNS not answering on this host? ./node-ctl check tells; the machine's public address is in ./node-ctl list)`,
+    `${name} is not reachable over the tailnet: ${err || 'no answer'}\n  (Tailscale off or MagicDNS not answering on this host? node-ctl check tells; the machine's public address is in node-ctl list)`,
   );
 }
 
@@ -79,7 +79,7 @@ chown node-ctl-user:node-ctl-user ~node-ctl-user/.ssh/id_ed25519 ~node-ctl-user/
 
 export async function installGitKey(run: Run, name: string): Promise<boolean> {
   if (!existsSync(run.p.gitKey)) {
-    run.progress.warn(`no ${run.p.gitKey}: git on ${name} has no commit key (./node-ctl init gitkey)`);
+    run.progress.warn(`no ${run.p.gitKey}: git on ${name} has no commit key (node-ctl init gitkey)`);
     return true;
   }
   const script = gitKeyScript(text(run.p.gitKey));

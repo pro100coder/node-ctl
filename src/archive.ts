@@ -16,7 +16,7 @@ import { confirm } from './ui.ts';
 // Archives are optional: an empty value disables them, and every command that needs one says which.
 function requireRestic(c: Config): void {
   for (const [key, value] of Object.entries(c.restic)) {
-    if (!value) throw new UserError(`restic.${key} is not set in ${c.file}: archives need an S3 bucket, run ./node-ctl init restic`);
+    if (!value) throw new UserError(`restic.${key} is not set in ${c.file}: archives need an S3 bucket, run node-ctl init restic`);
   }
 }
 
@@ -130,5 +130,5 @@ export const restore = async (ctx: Ctx): Promise<number | void> => {
   if (!(await waitReady(run, name))) return 1;
   const status = await remoteStep(run, `Restore /data of ${name}`, 'restore', name, restoreScript(config, selector));
   if (status) return status;
-  ctx.io.stdout.write(`restored: ./node-ctl ssh ${name}\n`);
+  ctx.io.stdout.write(`restored: node-ctl ssh ${name}\n`);
 };

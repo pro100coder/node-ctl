@@ -1,6 +1,6 @@
 // The texts of the bash cmd_help and usage, byte for byte: test/help.test.ts holds them to the bash CLI
 // while it exists. One page per command, printed before anything is read: help must work on a fresh install.
-export const USAGE = `usage: ./node-ctl [--progress=auto|tty|plain|json] <command> [args]
+export const USAGE = `usage: node-ctl [--progress=auto|tty|plain|json] <command> [args]
   init [step ...]              ask for missing credentials, verify, write node-ctl.yaml
   check                        verify node-ctl.yaml, host tools and API credentials
   accounts [--json]            the cloud accounts of node-ctl.yaml, with their machines
@@ -50,11 +50,11 @@ On a terminal a missing <name> is asked (a menu of the machines the command can 
 asks every option it is not given. Off a terminal a missing <name> is a usage error.
 Environment: NODE_CTL_PROGRESS, NODE_CTL_CONFIG=node-ctl.yaml, SERVERS_DIR=servers, NODE_CTL_LOG=node-ctl.log,
   GIT_KEY_FILE, BIN_DIR=~/.local/bin, SKILLS_DIR=~/.claude/skills, CLAUDE_DIR=~/.claude, CLAUDE_JSON=~/.claude.json, LAUNCH_AGENTS=~/Library/LaunchAgents, NO_COLOR, FORCE_COLOR.
-./node-ctl <command> --help, or ./node-ctl help <command>: what one command does, its options, examples.
+node-ctl <command> --help, or node-ctl help <command>: what one command does, its options, examples.
 `;
 
 export const PAGES: Record<string, string> = {
-  init: `usage: ./node-ctl init [step ...]
+  init: `usage: node-ctl init [step ...]
 
 Set up this computer: ask for every missing or broken credential, explain where to get it, verify it
 and write node-ctl.yaml after each step, then terraform apply so every account knows the ssh key.
@@ -71,19 +71,19 @@ Steps (in this order):
   restic     the S3 bucket and password for archives (optional: empty disables archives)
 
 Examples:
-  ./node-ctl init                 first run: everything
-  ./node-ctl init hetzner         add a Hetzner account or replace a token
-  ./node-ctl init tailscale       rotate the Tailscale OAuth client
+  node-ctl init                 first run: everything
+  node-ctl init hetzner         add a Hetzner account or replace a token
+  node-ctl init tailscale       rotate the Tailscale OAuth client
 `,
-  check: `usage: ./node-ctl check
+  check: `usage: node-ctl check
 
 Verify, without changing anything: the host tools (terraform, jq, yq, curl, node, ssh; restic and
 uuidgen when needed), the ssh key and agent, node-ctl.yaml, every Hetzner and Contabo account's
 credentials, Tailscale and the restic bucket, then that a running machine answers over the tailnet.
 Exits 1 when something fails, with the command that fixes it.
 `,
-  accounts: `usage: ./node-ctl accounts [--json]
-       ./node-ctl accounts add|edit [hetzner|contabo]
+  accounts: `usage: node-ctl accounts [--json]
+       node-ctl accounts add|edit [hetzner|contabo]
 
 Without arguments: the cloud accounts of node-ctl.yaml, their cloud, tag and how many machines
 each holds. add (or edit, the same dialogue) asks for one more account of that cloud, or new
@@ -93,11 +93,11 @@ Options:
   --json     the listing as a JSON array
 
 Examples:
-  ./node-ctl accounts
-  ./node-ctl accounts add hetzner
-  ./node-ctl accounts edit contabo
+  node-ctl accounts
+  node-ctl accounts add hetzner
+  node-ctl accounts edit contabo
 `,
-  create: `usage: ./node-ctl create [<name>] [--account tag] [--type cx23] [--location nbg1] [--size GB] [--ports 22,80]
+  create: `usage: node-ctl create [<name>] [--account tag] [--type cx23] [--location nbg1] [--size GB] [--ports 22,80]
 
 Create a new machine and wait until it answers over the tailnet (~3 min). The name is lowercase
 letters, digits and dashes. A name that already exists is started instead (options are refused then).
@@ -115,50 +115,50 @@ Options:
 Every option also takes --option=value.
 
 Examples:
-  ./node-ctl create dev1
-  ./node-ctl create dev2 --account work --type cx33 --location fsn1 --size 0
-  ./node-ctl create web --ports 22,80,443
+  node-ctl create dev1
+  node-ctl create dev2 --account work --type cx33 --location fsn1 --size 0
+  node-ctl create web --ports 22,80,443
 `,
-  volume: `usage: ./node-ctl volume <name> <size>
+  volume: `usage: node-ctl volume <name> <size>
 
 Add a Hetzner Volume of <size> GB at /mnt/volume to a machine that has none. A running machine
 mounts it at once, a stopped one at its next start. Hetzner only: Contabo has no block storage.
 
 Example:
-  ./node-ctl volume dev1 50
+  node-ctl volume dev1 50
 `,
-  ssh: `usage: ./node-ctl ssh <name> [cmd ...]
+  ssh: `usage: node-ctl ssh <name> [cmd ...]
 
 Log in as node-ctl-user over the tailnet, or run cmd there. Everything after the name goes to the
-machine, --help included. Plain ssh node-ctl-<name> works too once ./node-ctl init has run.
+machine, --help included. Plain ssh node-ctl-<name> works too once node-ctl init has run.
 
 Examples:
-  ./node-ctl ssh dev1
-  ./node-ctl ssh dev1 docker ps
+  node-ctl ssh dev1
+  node-ctl ssh dev1 docker ps
 `,
-  gitkey: `usage: ./node-ctl gitkey <name>
+  gitkey: `usage: node-ctl gitkey <name>
 
 Install the current commit key (GIT_KEY_FILE) as ~node-ctl-user/.ssh/id_ed25519 on a running
 machine that was created before the key existed or before it was rotated. Every start does it anyway.
 `,
-  autostop: `usage: ./node-ctl autostop <name> <time | off>
+  autostop: `usage: node-ctl autostop <name> <time | off>
 
 Set, move or drop the stop of a running machine, as start --till does at a start: HH:MM (tomorrow
 once past today), "YYYY-MM-DD HH:MM" in this computer's time zone, or how long from now: 6h, 6.9h,
 90m. off drops it. list shows it under AUTOSTOP.
 
 Examples:
-  ./node-ctl autostop dev1 3h
-  ./node-ctl autostop dev1 19:30
-  ./node-ctl autostop dev1 off
+  node-ctl autostop dev1 3h
+  node-ctl autostop dev1 19:30
+  node-ctl autostop dev1 off
 `,
-  hostkeys: `usage: ./node-ctl hostkeys <name>
+  hostkeys: `usage: node-ctl hostkeys <name>
 
 Record a running machine's host keys again: drop its old entries from ~/.ssh/known_hosts and Orca's
 stores, then add the keys it answers with now. create, start and restore already do this; use it for
 a machine rebuilt outside the CLI.
 `,
-  cato: `usage: ./node-ctl cato <name> [account user]
+  cato: `usage: node-ctl cato <name> [account user]
 
 Sign the Cato SDP client on a running machine in again. Its token is bound to the VPS it was issued
 on, so a machine booted from its snapshot is disconnected until someone signs in, and Cato's Google
@@ -168,10 +168,10 @@ over an ssh port forward. account and user are stored in the inventory (.cato) t
 then on start signs the machine in by itself once it is ready. The client itself is installed by hand.
 
 Examples:
-  ./node-ctl cato dev1 acme me@example.com
-  ./node-ctl cato dev1
+  node-ctl cato dev1 acme me@example.com
+  node-ctl cato dev1
 `,
-  list: `usage: ./node-ctl list [--json]
+  list: `usage: node-ctl list [--json]
 
 Every machine of the inventory: account, state (ready once the tailnet sees it, starting until then,
 stopping while a stop runs,
@@ -179,9 +179,9 @@ stopped, archived), how long a running one has been up (since its last start), w
 stops it, public IPv4, MagicDNS name, open ports and Funnel URLs.
 
 Options:
-  --json     a JSON array, with the IPv6, started and stops_at (epoch seconds) too; safe to parse: ./node-ctl list --json 2>/dev/null
+  --json     a JSON array, with the IPv6, started and stops_at (epoch seconds) too; safe to parse: node-ctl list --json 2>/dev/null
 `,
-  load: `usage: ./node-ctl load [-f] [name]
+  load: `usage: node-ctl load [-f] [name]
 
 CPU, memory, load average, disk busy time and root disk usage of a machine as bars (red past 70%),
 sampled over one second. Without a name every running machine is one row of a table, all sampled
@@ -190,7 +190,7 @@ in parallel; a machine that does not answer says unreachable.
 Options:
   -f, --follow   sample again every second: redrawn in place on a terminal, new lines in a pipe; Ctrl-C ends
 `,
-  stop: `usage: ./node-ctl stop <name ...> | --all
+  stop: `usage: node-ctl stop <name ...> | --all
 
 Stop the named machines, or every running one with --all. Without a name a terminal asks: every
 running machine is the first line, then each of them; off a terminal it is a usage error.
@@ -201,37 +201,37 @@ A machine that fails to stop stays running in the inventory and nothing is lost:
 A stop cut short after its snapshot (the network gone while Terraform deletes the VPS) is finished the same way.
 
 Examples:
-  ./node-ctl stop dev1
-  ./node-ctl stop dev1 dev2
-  ./node-ctl stop --all       every running machine
+  node-ctl stop dev1
+  node-ctl stop dev1 dev2
+  node-ctl stop --all       every running machine
 `,
-  start: `usage: ./node-ctl start <name ...> [--type [type]] [--till time] | --all
+  start: `usage: node-ctl start <name ...> [--type [type]] [--till time] | --all
 
 Bring stopped machines back as they were and wait until they answer; --all starts every stopped one,
 with one Terraform apply for all of them. Without a name a terminal asks: every stopped machine is
 the first line, then each of them; off a terminal it is a usage error. Hetzner: a new VPS from the disk
 snapshot (kept as the last good copy), the volume attached again; its public addresses change.
-Contabo: the instance is powered on. An archived machine needs ./node-ctl restore.
+Contabo: the instance is powered on. An archived machine needs node-ctl restore.
 
 Options:
   --all          every stopped machine
   --type [type]  boot it as another server type (Hetzner only, one machine); without a value it shows the types
                  the location creates now whose disk holds the snapshot, and asks
   --till time    stop it then, by this computer's clock and time zone: HH:MM (tomorrow once past today) or
-                 "YYYY-MM-DD HH:MM"; or after that long, counted from this command: 6h, 6.9h, 90m. A launchd job here runs ./node-ctl stop, so this Mac must be on: one asleep
+                 "YYYY-MM-DD HH:MM"; or after that long, counted from this command: 6h, 6.9h, 90m. A launchd job here runs node-ctl stop, so this Mac must be on: one asleep
                  or logged out stops it on wake or at login. A start without --till cancels an earlier one, autostop moves it;
                  log: ~/Library/Logs/node-ctl-stop-<name>.log
 
 Examples:
-  ./node-ctl start dev1
-  ./node-ctl start --all
-  ./node-ctl start dev1 --type cx43
-  ./node-ctl start dev1 --type        pick from the list
-  ./node-ctl start dev1 --till 19:30
-  ./node-ctl start dev1 --till "2026-12-01 09:00"
-  ./node-ctl start dev1 --till 6.5h
+  node-ctl start dev1
+  node-ctl start --all
+  node-ctl start dev1 --type cx43
+  node-ctl start dev1 --type        pick from the list
+  node-ctl start dev1 --till 19:30
+  node-ctl start dev1 --till "2026-12-01 09:00"
+  node-ctl start dev1 --till 6.5h
 `,
-  resize: `usage: ./node-ctl resize <name> [type] [--grow-disk|--keep-disk]
+  resize: `usage: node-ctl resize <name> [type] [--grow-disk|--keep-disk]
 
 Move a machine to another server type (Hetzner only); it reboots, its tailnet address stays.
 Without a type it opens the types sold in its location, cheapest first: up/down (or k/j) and
@@ -243,22 +243,22 @@ Options:
   --keep-disk    keep the current disk (the default off a terminal; a terminal asks)
 
 Examples:
-  ./node-ctl resize dev1
-  ./node-ctl resize dev1 cx43 --keep-disk
+  node-ctl resize dev1
+  node-ctl resize dev1 cx43 --keep-disk
 `,
-  ports: `usage: ./node-ctl ports <name> [port ...]
+  ports: `usage: node-ctl ports <name> [port ...]
 
 Without ports: the public TCP ports of the machine's firewall. With ports: replace them all
 (22 is always kept open).
 
 Examples:
-  ./node-ctl ports dev1
-  ./node-ctl ports dev1 22 80 443
-  ./node-ctl ports dev1 22          close everything else
+  node-ctl ports dev1
+  node-ctl ports dev1 22 80 443
+  node-ctl ports dev1 22          close everything else
 `,
-  expose: `usage: ./node-ctl expose <name>
-       ./node-ctl expose <name> <port> [/path]
-       ./node-ctl expose <name> --rm </path>
+  expose: `usage: node-ctl expose <name>
+       node-ctl expose <name> <port> [/path]
+       node-ctl expose <name> --rm </path>
 
 Publish a port of the machine on the internet through Tailscale Funnel, at
 https://<name>.<tailnet>.ts.net/path (path / by default). Without a port: what is published now.
@@ -266,22 +266,22 @@ https://<name>.<tailnet>.ts.net/path (path / by default). Without a port: what i
 for the tailnet in the Tailscale admin console.
 
 Examples:
-  ./node-ctl expose dev1 3000
-  ./node-ctl expose dev1 8080 /api
-  ./node-ctl expose dev1 --rm /api
+  node-ctl expose dev1 3000
+  node-ctl expose dev1 8080 /api
+  node-ctl expose dev1 --rm /api
 `,
-  backup: `usage: ./node-ctl backup <name>
+  backup: `usage: node-ctl backup <name>
 
 restic snapshot of /data (and /mnt/volume when there is one) of a running machine into the bucket
-of node-ctl.yaml, tagged with the name. Docker is stopped while it runs. Needs ./node-ctl init restic.
+of node-ctl.yaml, tagged with the name. Docker is stopped while it runs. Needs node-ctl init restic.
 `,
-  archive: `usage: ./node-ctl archive <name>
+  archive: `usage: node-ctl archive <name>
 
 backup, then delete the VPS, the disk snapshot and the volume: only the restic snapshot is left and
-nothing is billed for the machine (on Contabo its contract is cancelled). ./node-ctl restore brings
+nothing is billed for the machine (on Contabo its contract is cancelled). node-ctl restore brings
 it back.
 `,
-  restore: `usage: ./node-ctl restore <name> [snapshot] [--yes]
+  restore: `usage: node-ctl restore <name> [snapshot] [--yes]
 
 Start the machine if it is not running (an archived one is created again), then restore /data from
 restic: the latest snapshot tagged with the name, or the snapshot id given. On a running machine
@@ -291,19 +291,19 @@ Options:
   --yes      do not ask
 
 Examples:
-  ./node-ctl restore dev1
-  ./node-ctl restore dev1 4f2a9c1e --yes
+  node-ctl restore dev1
+  node-ctl restore dev1 4f2a9c1e --yes
 `,
-  destroy: `usage: ./node-ctl destroy <name> [--yes]
+  destroy: `usage: node-ctl destroy <name> [--yes]
 
 Delete the machine for good: the VPS, the disk snapshot and the volume, and its inventory entry.
 It asks you to type the name. On Contabo it cancels the contract, which Contabo bills to the end
-of the paid period. Run ./node-ctl backup first if /data matters.
+of the paid period. Run node-ctl backup first if /data matters.
 
 Options:
   --yes      do not ask
 `,
-  apply: `usage: ./node-ctl apply [name ...]
+  apply: `usage: node-ctl apply [name ...]
 
 terraform apply for the whole inventory, once per account, and rewrite ~/.ssh/config.d/node-ctl.
 For after editing servers/<name>.json by hand. Then the named machines (every running one without a
@@ -312,15 +312,15 @@ skills and the MCP servers. A named machine is also waited for, as start does, s
 whose apply was cut short. Terraform always applies the whole inventory.
 
 Examples:
-  ./node-ctl apply
-  ./node-ctl apply dev1
+  node-ctl apply
+  node-ctl apply dev1
 `,
-  version: `usage: ./node-ctl version
+  version: `usage: node-ctl version
 
-The commit this checkout is at, and its date. Same as ./node-ctl --version.
+The commit this checkout is at, and its date. Same as node-ctl --version.
 `,
-  help: `usage: ./node-ctl help [command]
+  help: `usage: node-ctl help [command]
 
-The list of commands, or the page of one command (same as ./node-ctl <command> --help).
+The list of commands, or the page of one command (same as node-ctl <command> --help).
 `,
 };

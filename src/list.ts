@@ -133,7 +133,7 @@ export const list: Handler = async ({ args, progress, io }) => {
   );
 };
 
-const USAGE = 'usage: ./node-ctl accounts [--json] | accounts add|edit [hetzner|contabo]';
+const USAGE = 'usage: node-ctl accounts [--json] | accounts add|edit [hetzner|contabo]';
 
 // The listing; add and edit are the init step of one cloud (init.ts).
 export function listAccounts(args: string[], config: Config, servers: string, out: { write(s: string): unknown }, color: boolean): void {
@@ -148,7 +148,7 @@ export function listAccounts(args: string[], config: Config, servers: string, ou
     ...Object.keys(config.hetzner).sort().map((tag) => ({ provider: 'hetzner', tag, machines: counts[tag] ?? 0 })),
     ...Object.keys(config.contabo).sort().map((tag) => ({ provider: 'contabo', tag, machines: counts[tag] ?? 0 })),
   ];
-  if (!rows.length) out.write(json ? '[]\n' : `no cloud account in ${config.file}: ./node-ctl accounts add\n`);
+  if (!rows.length) out.write(json ? '[]\n' : `no cloud account in ${config.file}: node-ctl accounts add\n`);
   else if (json) out.write(toJson(rows));
   else out.write(table([['CLOUD', 'ACCOUNT', 'MACHINES'], ...rows.map((r) => [r.provider, r.tag, String(r.machines)])], color));
 }

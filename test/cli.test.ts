@@ -19,7 +19,7 @@ async function run(argv: string[], env: Record<string, string> = {}) {
 test('every dispatched command has a help page that names it', () => {
   // the dispatch table is the list of commands: one added there without a page fails here
   expect(COMMANDS.length).toBeGreaterThan(20);
-  for (const c of [...COMMANDS, 'help']) expect(PAGES[c]).toStartWith(`usage: ./node-ctl ${c}`);
+  for (const c of [...COMMANDS, 'help']) expect(PAGES[c]).toStartWith(`usage: node-ctl ${c}`);
 });
 
 test('help, --help and -h print the usage on stdout and exit 0, whatever --progress says', async () => {
@@ -54,7 +54,7 @@ test('a handler that answers a number exits with it, as a command whose last ste
 
 test('an unknown command is an error with the usage; asking for its page names it', async () => {
   expect(await run(['frobnicate'])).toEqual({ code: 1, out: '', err: `node-ctl: unknown command: frobnicate\n${USAGE}` });
-  const page = { code: 1, out: '', err: 'node-ctl: unknown command: frobnicate (./node-ctl --help lists them)\n' };
+  const page = { code: 1, out: '', err: 'node-ctl: unknown command: frobnicate (node-ctl --help lists them)\n' };
   expect(await run(['frobnicate', '--help'])).toEqual(page);
   expect(await run(['help', 'frobnicate'])).toEqual(page);
   expect((await run(['help', 'toString'])).code).toBe(1); // a name off the object prototype is no page

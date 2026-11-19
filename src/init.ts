@@ -120,7 +120,7 @@ class Init {
   // init_step: a working value is kept; otherwise the step is asked until its check passes
   async step(step: Step): Promise<void> {
     if (!this.force && (await this.valid(step))) {
-      this.progress.log(`configured and working, kept (./node-ctl init ${step} to change)`);
+      this.progress.log(`configured and working, kept (node-ctl init ${step} to change)`);
       return;
     }
     while (!(await this.ask(step))) this.progress.info('-> try again');
@@ -322,7 +322,7 @@ class Init {
   Access controls -> JSON editor -> add "tag:dev": ["autogroup:admin"] to tagOwners -> Save (Definitions -> Tags lists it).
 Then Settings -> OAuth clients -> Generate: scopes Auth Keys (Write) and Devices Core (Write), Tags -> tag:dev. A client made before the tag existed must be regenerated.
 Leave empty to create the client now from an API access token (Settings -> Keys -> Generate access token).
-For ./node-ctl expose (Tailscale Funnel), also: JSON editor -> "nodeAttrs": [{"target": ["tag:dev"], "attr": ["funnel"]}], and DNS -> HTTPS Certificates -> Enable.`,
+For node-ctl expose (Tailscale Funnel), also: JSON editor -> "nodeAttrs": [{"target": ["tag:dev"], "attr": ["funnel"]}], and DNS -> HTTPS Certificates -> Enable.`,
       this.config.tailscale.client_id,
     );
     let secret = this.config.tailscale.client_secret;
@@ -394,7 +394,7 @@ export const init: Handler = async (ctx) => {
   for (const s of steps) await ctx.progress.withAction(s, s, () => run.step(s));
   ctx.progress.info('credentials verified; registering the ssh key with Hetzner');
   await apply(run.config, run.p, ctx.progress, ctx.io.env);
-  ctx.progress.info('done: ./node-ctl create dev1');
+  ctx.progress.info('done: node-ctl create dev1');
 };
 
 // Adding and changing are the same question (the init step of that cloud asks for a tag and replaces
