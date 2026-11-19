@@ -8,4 +8,5 @@ node-ctl.log.1
 servers/*.json
 keys/
 node-ctl.yaml
-.claude/reports/
+.claude/reports/dist/
+node_modules/
