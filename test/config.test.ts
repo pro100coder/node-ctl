@@ -23,6 +23,11 @@ restic: {repository: "s3:test", password: p w, access_key_id: id, secret_access_
 ssh_public_key_file: ~/.ssh/k.pub
 `;
 
+test('accounts are sorted within each provider, as jq keys listed them, whatever the order of the file', () => {
+  const c = loadConfig(file('hetzner: {work: t2, main: t1}\ncontabo: {zz: {}, cb: {}}\n'), env);
+  expect(accounts(c)).toEqual(['main', 'work', 'cb', 'zz']);
+});
+
 test('accounts are the Hetzner tags, then the Contabo ones; each names its provider and its own credentials', () => {
   const c = loadConfig(file(FULL), env);
   expect(accounts(c)).toEqual(['main', 'work', 'cb']);

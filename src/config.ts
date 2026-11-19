@@ -92,9 +92,9 @@ export function loadConfig(file: string, env: Record<string, string | undefined>
   };
 }
 
-// Every tag, Hetzner first, in the order of the file.
+// Every tag, Hetzner first, each provider's sorted (jq keys): apply, check and the messages list them so.
 export function accounts(c: Config): string[] {
-  return [...Object.keys(c.hetzner), ...Object.keys(c.contabo)];
+  return [...Object.keys(c.hetzner).sort(), ...Object.keys(c.contabo).sort()];
 }
 
 // The account a tag names, undefined for an unknown tag. A tag under both providers cannot say where a

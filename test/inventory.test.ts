@@ -81,6 +81,12 @@ test('machine names are the .json files, sorted; anything else in the directory 
   expect(machineNames(join(dir, 'missing'))).toEqual([]);
 });
 
+test('machine names come in the order of the files, as the glob listed them: a-b.json before a.json', () => {
+  const dir = servers();
+  for (const n of ['web', 'web-api', 'chat']) put(dir, n, '{}');
+  expect(machineNames(dir)).toEqual(['chat', 'web-api', 'web']);
+});
+
 test('exists refuses a machine with no entry, with no account, or of an account the configuration lacks', () => {
   const dir = servers();
   const c = config('hetzner: {main: t, work: t2}\n');

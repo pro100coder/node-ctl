@@ -84,13 +84,15 @@ export function editMachine(servers: string, name: string, change: (m: Machine) 
   return m;
 }
 
+// In the order of the glob over the files, which sorts the file names, .json included: web-api.json
+// comes before web.json, as '-' before '.'.
 // shortcut: plain code-unit order, which is the glob's for ASCII names; a non-ASCII name may sort apart from bash.
 export function machineNames(servers: string): string[] {
   if (!existsSync(servers)) return [];
   return readdirSync(servers)
     .filter((f) => f.endsWith('.json'))
-    .map((f) => f.slice(0, -'.json'.length))
-    .sort();
+    .sort()
+    .map((f) => f.slice(0, -'.json'.length));
 }
 
 // The entry and the account it lives in; refused with the bash messages before any action starts.
