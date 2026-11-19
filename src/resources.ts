@@ -16,7 +16,6 @@ import contaboVersions from '../terraform/contabo/versions.tf' with { type: 'tex
 import cloudInit from '../terraform/modules/cloud-init/main.tf' with { type: 'text' };
 import provision from '../scripts/provision.sh' with { type: 'text' };
 import mountVolume from '../scripts/mount-volume.sh' with { type: 'text' };
-import poweron from '../scripts/poweron.sh' with { type: 'text' };
 import migrateSkill from '../skills/node-ctl-migrate/SKILL.md' with { type: 'text' };
 
 // Path under NODE_CTL_HOME → contents. test/resources.test.ts holds it to the checkout's files.
@@ -34,7 +33,6 @@ export const RESOURCES: Record<string, string> = {
   'terraform/modules/cloud-init/main.tf': cloudInit,
   'scripts/provision.sh': provision,
   'scripts/mount-volume.sh': mountVolume,
-  'scripts/poweron.sh': poweron,
   'skills/node-ctl-migrate/SKILL.md': migrateSkill,
 };
 

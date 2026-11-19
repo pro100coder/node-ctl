@@ -1,5 +1,5 @@
 // The Hetzner Cloud API for what Terraform does not answer: the server types on offer, a machine's
-// disk, its disk snapshot, and powering a server on (scripts/server-types.sh, image.sh, poweron.sh).
+// disk, its disk snapshot, and powering a server on (scripts/server-types.sh, image.sh and poweron.sh of the bash version).
 // The token is the machine's account's, handed to each call.
 import { request, sleep } from './http.ts';
 

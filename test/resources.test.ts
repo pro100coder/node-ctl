@@ -16,7 +16,7 @@ test('the first unpack writes every embedded file where the checkout had it; scr
   const home = fresh();
   expect(unpack(home)).toBe(true);
   for (const [path, text] of Object.entries(RESOURCES)) expect(read(home, path)).toBe(text);
-  expect(statSync(join(home, 'scripts/poweron.sh')).mode & 0o111).toBe(0o111);
+  expect(statSync(join(home, 'scripts/provision.sh')).mode & 0o111).toBe(0o111);
 });
 
 test('the relative paths in the roots still meet: the module finds the machine scripts, both roots the default inventory', () => {
@@ -94,7 +94,7 @@ test('everything Terraform and cloud-init read is embedded: every root and modul
     (p) => !/(^|\/)(tests|\.terraform|terraform\.tfstate\.d)\//.test(p),
   );
   expect(tracked.length).toBeGreaterThan(8);
-  const wanted = [...tracked, 'scripts/provision.sh', 'scripts/mount-volume.sh', 'scripts/poweron.sh', 'skills/node-ctl-migrate/SKILL.md'];
+  const wanted = [...tracked, 'scripts/provision.sh', 'scripts/mount-volume.sh', 'skills/node-ctl-migrate/SKILL.md'];
   expect(Object.keys(RESOURCES).sort()).toEqual(wanted.sort());
   for (const path of wanted) expect(RESOURCES[path]).toBe(readFileSync(join(root, path), 'utf8'));
 });
