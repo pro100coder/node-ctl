@@ -18,11 +18,16 @@ function compile(entry: string, out: string, ...flags: string[]): string {
 }
 
 test('the binary prints the version and sha it was built with, and its help', () => {
-  const bin = compile('src/cli.ts', 'node-ctl', '--define', 'NODE_CTL_VERSION="v0.261119.2"', '--define', 'NODE_CTL_SHA="abc1234"');
+  const bin = compile('src/cli.ts', 'node-ctl', '--minify', '--define', 'NODE_CTL_VERSION="v0.261119.2"', '--define', 'NODE_CTL_SHA="abc1234"');
   const version = Bun.spawnSync([bin, 'version']);
   expect([version.exitCode, version.stdout.toString()]).toEqual([0, 'node-ctl v0.261119.2 (abc1234)\n']);
   const help = Bun.spawnSync([bin, 'help', 'create']);
   expect([help.exitCode, help.stdout.toString()]).toEqual([0, PAGES.create!]);
+  // app/ is public (ADR-0020): no path into the checkout, which names its builder. Unminified, the bundle keeps a
+  // comment with each module's path, so this holds for the minified build only, which bun run build is. The
+  // checkout alone may be short enough (/work) to occur in Bun's own runtime, and so may the home directory: Bun's
+  // macOS runtime, built on GitHub's runners, carries /Users/runner/work/_temp.
+  expect(readFileSync(bin).includes(join(root, 'src', 'cli.ts'))).toBe(false);
 });
 
 test('a compiled binary carries the embedded files and unpacks them', () => {

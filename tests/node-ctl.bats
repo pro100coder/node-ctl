@@ -42,6 +42,7 @@ setup() {
   export PATH="$BATS_TEST_DIRNAME/stubs:$PATH"
   export NODE_CTL_HOME="$BATS_TEST_TMPDIR/home" # never the caller's own ~/.node-ctl
   RAE="$BATS_TEST_DIRNAME/stubs/node-ctl-bin" # the binary, through the wrapper that gives it a test HTTP server
+  PTY="$BATS_TEST_DIRNAME/pty" # runs a command on a terminal, which BSD and util-linux script(1) start differently
   : > "$STUB_LOG"
   # A complete configuration: one Hetzner account (stop/start/resize call its API, the test server
   # answers), a working OAuth client (create/start free the tailnet name through the Tailscale API) and
@@ -61,6 +62,7 @@ line_of() { grep -n -F -- "$1" "$STUB_LOG" | tail -1 | cut -d: -f1; }
 ev() { jq -cr "$1" "$STUB_EVENTS"; } # the JSON events of the run (NODE_CTL_EVENTS)
 id_of() { ev "select(.event_type == \"started\" and .action_name == \"$1\") | .action_id" | head -1; }
 said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]; } # in what it printed or in what an action reported
+macos_only() { [ "$(uname)" = Darwin ] || skip "launchd and BSD date are macOS only"; } # the Linux timer has its own tests
 
 @test "create writes the inventory entry with defaults, applies and waits" {
   run "$RAE" create dev1
@@ -223,6 +225,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 }
 
 @test "the autostop job keeps retrying a stop whose apply failed instead of removing itself" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1
   "$RAE" start dev1 --till "2099-06-01 18:30"
   job=$(job_script dev1 | sed 's/-ge [0-9]*/-ge 0/')
@@ -295,12 +298,12 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 @test "create asks which account on a terminal, by number or by tag" {
   config '.hetzner.work = "t2"'
   # script(1) lends a pty, so the question is asked; the answer arrives once the prompt is up (an early EOF would discard it)
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --size 0 --type cx23"
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --size 0 --type cx23"
   [[ $output == *"1) main"*"2) work"*"ready: node-ctl ssh dev1"* ]] || false
   [ "$(inv dev1 .account)" = work ]
-  run bash -c "(/bin/sleep 1; printf 'main\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev2 --size 0 --type cx23"
+  run bash -c "(/bin/sleep 1; printf 'main\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev2 --size 0 --type cx23"
   [ "$(inv dev2 .account)" = main ]
-  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev3 --size 0 --type cx23"
+  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev3 --size 0 --type cx23"
   [[ $output == *"not an account: nope"* ]] || false
   [ ! -e "$SERVERS_DIR/dev3.json" ]
 }
@@ -309,10 +312,10 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   run "$RAE" create --size 0
   [ "$status" -eq 1 ]
   [[ $output == *"usage: node-ctl create <name>"* ]] || false
-  run bash -c "(/bin/sleep 1; printf 'dev1\n'; /bin/sleep 1; printf '80,443\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create --type cx23 --size 0"
+  run bash -c "(/bin/sleep 1; printf 'dev1\n'; /bin/sleep 1; printf '80,443\n'; /bin/sleep 3) | '$PTY' '$RAE' create --type cx23 --size 0"
   [[ $output == *"Name of the new machine"*"Public TCP ports"*"ready: node-ctl ssh dev1"* ]] || false
   [ "$(inv dev1 -c .open_ports)" = "[22,80,443]" ]
-  run bash -c "(/bin/sleep 1; printf 'Bad_Name\n'; /bin/sleep 1) | script -q /dev/null '$RAE' create"
+  run bash -c "(/bin/sleep 1; printf 'Bad_Name\n'; /bin/sleep 1) | '$PTY' '$RAE' create"
   [[ $output == *"name must be lowercase"* ]] || false
 }
 
@@ -322,37 +325,37 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   run "$RAE" start # off a terminal its own usage error stands
   [ "$status" -eq 1 ]
   [[ $output == *"usage: node-ctl start <name ...>"* ]] || false
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' start"
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' start"
   [[ $output == *"1) all: every stopped machine"*"2) dev2"*stopped* && $output != *"3) "* ]] || false # the running ones cannot be started
   [ "$(inv dev2 .state)" = running ]
-  run bash -c "(/bin/sleep 1; printf 'dev3\n'; /bin/sleep 3) | script -q /dev/null '$RAE' destroy --yes" # options stay after the asked name
+  run bash -c "(/bin/sleep 1; printf 'dev3\n'; /bin/sleep 3) | '$PTY' '$RAE' destroy --yes" # options stay after the asked name
   [ ! -e "$SERVERS_DIR/dev3.json" ]
-  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 1; printf '30\n'; /bin/sleep 3) | script -q /dev/null '$RAE' volume"
+  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 1; printf '30\n'; /bin/sleep 3) | '$PTY' '$RAE' volume"
   [[ $output == *"dev1: 30G at /mnt/volume"* ]] || false
   [ "$(inv dev1 .volume_size)" = 30 ]
-  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 1) | script -q /dev/null '$RAE' ports"
+  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 1) | '$PTY' '$RAE' ports"
   [[ $output == *"not a machine: nope"* ]] || false
-  run bash -c "script -q /dev/null '$RAE' start < /dev/null"
+  run bash -c "'$PTY' '$RAE' start < /dev/null"
   [[ $output == *"no stopped machine for start"* ]] || false
 }
 
 @test "a bare stop or start on a terminal offers all of them first, then each one" {
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" create dev3
-  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 3) | script -q /dev/null '$RAE' stop"
+  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 3) | '$PTY' '$RAE' stop"
   [[ $output == *"1) all: every running machine"*"2) dev1"*"3) dev2"*"4) dev3"* ]] || false
   [ "$(inv dev1 .state)$(inv dev2 .state)$(inv dev3 .state)" = stoppedstoppedstopped ]
-  run bash -c "(/bin/sleep 1; printf 'dev2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' start"
+  run bash -c "(/bin/sleep 1; printf 'dev2\n'; /bin/sleep 3) | '$PTY' '$RAE' start"
   [ "$(inv dev1 .state)$(inv dev2 .state)$(inv dev3 .state)" = stoppedrunningstopped ]
-  run bash -c "(/bin/sleep 1; printf 'q\n'; /bin/sleep 1) | script -q /dev/null '$RAE' start --type" # --type is one machine: no line for all
+  run bash -c "(/bin/sleep 1; printf 'q\n'; /bin/sleep 1) | '$PTY' '$RAE' start --type" # --type is one machine: no line for all
   [[ $output == *"1) dev1"* && $output != *"all: every"* ]] || false
 }
 
 @test "a name after the options is a name: a terminal is not asked for one" {
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop --all
-  run bash -c "script -q /dev/null '$RAE' start --till 2.9h dev2 < /dev/null"
+  run bash -c "'$PTY' '$RAE' start --till 2.9h dev2 < /dev/null"
   [[ $output != *"? machine"* && $output != *"aborted"* ]] || false
   [ "$(inv dev1 .state)$(inv dev2 .state)" = stoppedrunning ]
-  run bash -c "script -q /dev/null '$RAE' start --till 2h < /dev/null" # an option's value is no name: it still asks
+  run bash -c "'$PTY' '$RAE' start --till 2h < /dev/null" # an option's value is no name: it still asks
   [[ $output == *"1) dev1"* ]] || false
   [ "$(inv dev1 .state)" = stopped ]
 }
@@ -476,7 +479,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   run "$RAE" create dev1 # stdin is not a terminal: nothing to ask on
   [ "$status" -eq 1 ]
   [[ $output == *"several accounts (hetzner/main contabo/cb): pass --account"* ]] || false
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --type V45" # --type: the account is the only question here
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --type V45" # --type: the account is the only question here
   [[ $output == *"1) main (hetzner)"*"2) cb (contabo)"* ]] || false
   [ "$(inv dev1 .account)" = cb ]
   run "$RAE" create dev2 --account nope
@@ -1235,6 +1238,7 @@ types() {
 }
 
 @test "list shows how long a running machine has been up and when its timer stops it" {
+  macos_only
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop dev2
   [ "$(inv dev1 .started)" -le "$(date +%s)" ]
   [ "$(inv dev1 .started)" -gt $(($(date +%s) - 60)) ]
@@ -2115,7 +2119,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 
 @test "the renderer draws past the log and writes the log its own stamped lines, on a terminal and in a pipe" {
   stamped='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8} \[1/4 host\] START Host$'
-  out=$(NODE_CTL_PROGRESS=auto script -q /dev/null "$RAE" check </dev/null)
+  out=$(NODE_CTL_PROGRESS=auto "$PTY" "$RAE" check </dev/null)
   [[ $out == *$'\e['*"Host"* && $out != *"START Host"* ]] || false # a live region on the terminal
   grep -qE "$stamped" "$NODE_CTL_LOG" # the log gets plain lines with their time
   ! grep -q $'\e' "$NODE_CTL_LOG" || false # and none of the drawing
@@ -2128,7 +2132,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 }
 
 @test "a log past 10 MB becomes node-ctl.log.1, replacing the previous one, and the run starts a new log" {
-  dd if=/dev/zero of="$NODE_CTL_LOG" bs=1 count=0 seek=11m 2>/dev/null
+  dd if=/dev/zero of="$NODE_CTL_LOG" bs=1 count=0 seek=$((11 * 1024 * 1024)) 2>/dev/null
   echo "two runs ago" > "$NODE_CTL_LOG.1"
   run "$RAE" list
   [ "$(wc -c < "$NODE_CTL_LOG.1")" -gt 10000000 ]
@@ -2229,7 +2233,7 @@ create_types() {
 @test "create offers the tariffs cheapest first and asks the location when that tariff is sold in several" {
   create_types
   # the second type, then the second of its two locations
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --size 0"
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --size 0"
   [[ $output == *LOCATIONS*cx22*4.51*nbg1*cx33*16.40*fsn1,nbg1* ]] || false # cheapest first, with where each is sold
   [[ $output == *"1) fsn1"*"2) nbg1"* ]] || false
   [ "$(inv dev1 .type)" = cx33 ]
@@ -2238,11 +2242,11 @@ create_types() {
 
 @test "create takes a tariff offered in one location without asking, and refuses a location that cannot take it" {
   create_types
-  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --size 0" # an empty answer takes the cheapest
+  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --size 0" # an empty answer takes the cheapest
   [ "$(inv dev1 .type)" = cx22 ]
   [ "$(inv dev1 .location)" = nbg1 ] # its only location: nothing to ask
   [[ $output != *"1) nbg1"* ]] || false
-  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev2 --size 0 --location fsn1"
+  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev2 --size 0 --location fsn1"
   [[ $output == *"fsn1 cannot take a cx22 right now, only nbg1 can"* ]] || false
   [ ! -e "$SERVERS_DIR/dev2.json" ]
 }
@@ -2250,7 +2254,7 @@ create_types() {
 @test "create on Contabo offers the products its API spec documents and every region, without prices" {
   contabo
   # the third product, then the second region
-  run bash -c "(/bin/sleep 1; printf '3\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --account cb"
+  run bash -c "(/bin/sleep 1; printf '3\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --account cb"
   grep -q 'api.contabo.com/api-v1.yaml' "$STUB_LOG" # read on every create, so a new line-up needs no release
   [[ $output == *"V153 Cloud VPS 4, 100 GB SSD"*"V93 VPS 10 Storage, 300 GB SSD"*"V16 VDS XXL, 720 GB NVMe"* ]] || false
   [[ $output != *EUR* ]] || false # Contabo's API carries no price, so none is shown
@@ -2261,14 +2265,14 @@ create_types() {
 
 @test "create on Contabo stops when the API spec cannot be read, unless --type answers it" {
   contabo
-  run bash -c "STUB_CURL_BODY='openapi: 3.0.3' script -q /dev/null '$RAE' create dev1 --account cb < /dev/null"
+  run bash -c "STUB_CURL_BODY='openapi: 3.0.3' '$PTY' '$RAE' create dev1 --account cb < /dev/null"
   [[ $output == *"could not read the products from Contabo's API spec; --type answers it"* ]] || false
   [ ! -e "$SERVERS_DIR/dev1.json" ]
 }
 
 @test "create on Contabo takes a product id that is not in the documented table" {
   contabo # the table is a shortcut, not a whitelist: an id the spec does not list yet is taken as typed
-  run bash -c "(/bin/sleep 1; printf 'V999\n'; /bin/sleep 1; printf '\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --account cb"
+  run bash -c "(/bin/sleep 1; printf 'V999\n'; /bin/sleep 1; printf '\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --account cb"
   [ "$(inv dev1 .type)" = V999 ]
   [ "$(inv dev1 .location)" = EU ] # an empty answer takes the first region
 }
@@ -2288,7 +2292,7 @@ drive() { # drive <keys per question ...> -- <node-ctl args>
   local feed='/bin/sleep 1'
   while [ "$1" != -- ]; do feed="$feed; printf '$1'; /bin/sleep 1"; shift; done
   shift
-  run bash -c "($feed; /bin/sleep 2) | script -q /dev/null bash -c \"stty rows 30 cols 120; exec '$RAE' $*\""
+  run bash -c "($feed; /bin/sleep 2) | '$PTY' bash -c \"stty rows 30 cols 120; exec '$RAE' $*\""
 }
 
 @test "a question with several answers is a menu: arrows move, enter picks, the answer replaces it" {
@@ -2406,6 +2410,7 @@ CATO_URL='https://sso.ias.catonetworks.com/login?ws=acme&redirect_uri=http://127
 job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.node-ctl.stop.$1.plist"; }
 
 @test "start --till schedules a launchd job that stops the machine at that time of this computer's time zone" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1; : > "$STUB_LOG"
   TZ=Europe/Berlin run "$RAE" start dev1 --till "2099-06-01 18:30"
   [ "$status" -eq 0 ]
@@ -2436,6 +2441,7 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
 }
 
 @test "the job stops a running machine once its time has come, then removes itself; a start without --till drops it" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1
   "$RAE" start dev1 --till "2099-06-01 18:30"
   bash -c "$(job_script dev1)" # not yet: nothing happens
@@ -2452,6 +2458,7 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
 }
 
 @test "start --till also takes how long the machine lives, in hours or minutes, fractions included" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1
   before=$(date +%s)
   run "$RAE" start dev1 --till 6.9h
@@ -2473,6 +2480,7 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
 }
 
 @test "autostop sets, moves or drops the stop of a running machine" {
+  macos_only
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop dev2; : > "$STUB_LOG"
   before=$(date +%s)
   run "$RAE" autostop dev1 2h
@@ -2500,8 +2508,8 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
   [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev1.plist" ]
 }
 
-# The systemd path, forced on any host through NODE_CTL_PLATFORM, which only tests set.
-linux() { NODE_CTL_PLATFORM=linux "$RAE" "$@"; }
+# The systemd path: on Linux the binary takes it by itself; elsewhere NODE_CTL_PLATFORM, which only tests set, forces it.
+linux() { if [ "$(uname)" = Linux ]; then "$RAE" "$@"; else NODE_CTL_PLATFORM=linux "$RAE" "$@"; fi; }
 unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the systemd-run stub kept
 
 @test "on Linux start --till runs a transient user timer at that moment in UTC, which list shows and a start without --till drops" {
