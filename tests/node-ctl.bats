@@ -1050,6 +1050,33 @@ types() {
   [ "$(line_of 'node-ctl-user@dev1 sudo systemd-run --quiet --on-active=2 tailscale logout')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
 }
 
+@test "archive on Hetzner forgets the root disk snapshot it deleted; on Contabo the standard image stays" {
+  contabo
+  "$RAE" create dev1 --account main
+  "$RAE" create cb1 --account cb
+  jq '.image = "4242"' "$SERVERS_DIR/dev1.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$SERVERS_DIR/dev1.json"
+  local standard; standard=$(inv cb1 .image)
+  run "$RAE" archive dev1
+  [ "$status" -eq 0 ]
+  [ "$(inv dev1 .state)" = archived ]
+  [ "$(inv dev1 '.image // "none"')" = none ] # the next create boots the base image, not a snapshot that is gone
+  run "$RAE" archive cb1
+  [ "$status" -eq 0 ]
+  [ -n "$standard" ] && [ "$(inv cb1 .image)" = "$standard" ] || false
+  run "$RAE" restore cb1
+  [ "$status" -eq 0 ]
+  [ "$(inv cb1 .image)" = "$standard" ] # a new contract is made from it
+}
+
+@test "restore of an archived Hetzner machine that still names its deleted snapshot boots the base image" {
+  mkdir -p "$SERVERS_DIR"
+  echo '{"state":"archived","account":"main","image":"4242","open_ports":[22],"funnel":{}}' > "$SERVERS_DIR/dev1.json"
+  run "$RAE" restore dev1
+  [ "$status" -eq 0 ]
+  [ "$(inv dev1 .state)" = running ]
+  [ "$(inv dev1 '.image // "none"')" = none ]
+}
+
 @test "restore starts an archived machine and restores the tagged snapshot" {
   mkdir -p "$SERVERS_DIR"
   echo '{"state":"archived","account":"main","open_ports":[22],"funnel":{}}' > "$SERVERS_DIR/dev1.json"

@@ -94,7 +94,11 @@ export const archive = async (ctx: Ctx): Promise<number | void> => {
   if (status) return status; // restic holds nothing yet: the machine stays as it is
   await leaveTailnet(run, name);
   if (snap) await deleteSnapshot(run, name); // restic holds the data now; the disk snapshot would only be billed
-  if (!(await writeInventory(run, name, (e) => (e.state = 'archived')))) return 1;
+  const wrote = await writeInventory(run, name, (e) => {
+    e.state = 'archived';
+    if (snap) delete e.image; // the snapshot is gone: the next create boots the base image (on Contabo it is the standard image)
+  });
+  if (!wrote) return 1;
   await apply(run.config, run.p, run.progress, run.env);
 };
 
@@ -121,6 +125,8 @@ export const restore = async (ctx: Ctx): Promise<number | void> => {
   if (powerOn && !(await power(run, name, true))) progress.warn(`could not power ${name} on; the apply below creates it if it does not exist yet`);
   if (start) {
     const wrote = await writeInventory(run, name, (m) => {
+      // archive deleted its disk snapshot; an archive written before it forgot that still names the snapshot
+      if (machine.state === 'archived' && account.provider !== 'contabo') delete m.image;
       m.state = 'running';
       m.started = Math.floor(Date.now() / 1000);
     });
