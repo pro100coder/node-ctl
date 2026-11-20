@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Test stub: the suite must never start a unit in the caller's systemd; the call goes to the log. The timer
+# stays as $STUB_SYSTEMD/<unit>.timer (its description, which the systemctl stub lists) and what it runs
+# as $STUB_SYSTEMD/<unit>.service, a script a test runs to fire it.
+echo "systemd-run: $*" >> "$STUB_LOG"
+dir=${STUB_SYSTEMD:-$(dirname "$STUB_LOG")/systemd}
+unit='' desc='' env=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    --unit=*) unit=${1#*=} ;;
+    --description=*) desc=${1#*=} ;;
+    --setenv=*) env="${env}export $(printf '%q' "${1#*=}")
+" ;;
+    -*) ;;
+    *) break ;;
+  esac
+  shift
+done
+[ -n "$unit" ] || { echo "systemd-run stub: no --unit" >&2; exit 1; }
+mkdir -p "$dir"
+echo "$desc" > "$dir/$unit.timer"
+{ printf '%s' "$env"; printf '%q ' "$@"; echo; } > "$dir/$unit.service"

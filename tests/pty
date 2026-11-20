@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# pty <command> [args...]: runs the command on a pseudo-terminal, its input from this stdin, with script(1),
+# whose BSD (macOS) and util-linux forms take the command differently.
+set -euo pipefail
+if [ "$(uname)" = Darwin ]; then
+  exec script -q /dev/null "$@"
+fi
+exec script -q -e -f -c "$(printf '%q ' "$@")" /dev/null

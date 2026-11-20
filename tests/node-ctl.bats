@@ -1,10 +1,26 @@
 #!/usr/bin/env bats
-# ./node-ctl against stubbed terraform/ssh/curl: inventory edits, command ordering, rendered remote scripts.
+# node-ctl against stubbed terraform/ssh and a test HTTP server: inventory edits, command ordering, rendered remote scripts.
+
+# The suite drives the compiled binary: setup_file builds dist/node-ctl once per run (not when no source is
+# newer than it) and tests/stubs/node-ctl-bin runs it against tests/stubs/http-server.ts. NODE_CTL_BIN
+# points the same suite at another binary (a release, say).
+setup_file() {
+  local root=$BATS_TEST_DIRNAME/..
+  if [ -z "${NODE_CTL_BIN:-}" ]; then
+    NODE_CTL_BIN=$root/dist/node-ctl
+    if [ ! -x "$NODE_CTL_BIN" ] || [ -n "$(find "$root/src" "$root/scripts" "$root/terraform" "$root/skills" "$root/package.json" "$root/bun.lock" -type f -newer "$NODE_CTL_BIN" 2>/dev/null | head -1)" ]; then
+      (cd "$root" && bun run build) >"$BATS_FILE_TMPDIR/build.log" 2>&1 || { cat "$BATS_FILE_TMPDIR/build.log" >&2; return 1; }
+    fi
+  fi
+  case $NODE_CTL_BIN in /*) ;; *) NODE_CTL_BIN=$PWD/$NODE_CTL_BIN ;; esac
+  export NODE_CTL_BIN
+}
 
 setup() {
   # the caller's shell may export credentials or colour settings; tests must never see them
   unset HCLOUD_TOKEN TAILSCALE_OAUTH_CLIENT_ID TAILSCALE_OAUTH_CLIENT_SECRET \
-        RESTIC_REPOSITORY RESTIC_PASSWORD AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TS_API_KEY FORCE_COLOR NO_COLOR NODE_CTL_COLOR CI
+        RESTIC_REPOSITORY RESTIC_PASSWORD AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TS_API_KEY FORCE_COLOR NO_COLOR NODE_CTL_COLOR CI \
+        NODE_CTL_SELF NODE_CTL_BIN_DIR NODE_CTL_UNAME_S NODE_CTL_UNAME_M
   export SERVERS_DIR="$BATS_TEST_TMPDIR/servers"
   export NODE_CTL_CONFIG="$BATS_TEST_TMPDIR/node-ctl.yaml" # never the repo's own node-ctl.yaml
   export STUB_LOG="$BATS_TEST_TMPDIR/stub.log"
@@ -13,7 +29,6 @@ setup() {
   export SSH_PUBLIC_KEY_FILE="$BATS_TEST_TMPDIR/key.pub"
   export SSH_DIR="$BATS_TEST_TMPDIR/ssh" # never the caller's own ~/.ssh
   export ORCA_PROFILES="$BATS_TEST_TMPDIR/orca" # never the caller's own Orca host-key stores
-  export BIN_DIR="$BATS_TEST_TMPDIR/bin" # never the caller's own ~/.local/bin
   export SKILLS_DIR="$BATS_TEST_TMPDIR/skills" # never the caller's own ~/.claude/skills
   export CLAUDE_DIR="$BATS_TEST_TMPDIR/claude" # never the caller's own ~/.claude
   export CLAUDE_JSON="$BATS_TEST_TMPDIR/claude.json" # never the caller's own MCP servers
@@ -25,11 +40,13 @@ setup() {
   echo "PRIVATE-TEST-KEY" > "$GIT_KEY_FILE"
   echo "ssh-ed25519 AAAAgit node-ctl-user commit key" > "$GIT_KEY_FILE.pub"
   export PATH="$BATS_TEST_DIRNAME/stubs:$PATH"
-  RAE="$BATS_TEST_DIRNAME/../node-ctl"
+  export NODE_CTL_HOME="$BATS_TEST_TMPDIR/home" # never the caller's own ~/.node-ctl
+  RAE="$BATS_TEST_DIRNAME/stubs/node-ctl-bin" # the binary, through the wrapper that gives it a test HTTP server
+  PTY="$BATS_TEST_DIRNAME/pty" # runs a command on a terminal, which BSD and util-linux script(1) start differently
   : > "$STUB_LOG"
-  # A complete configuration: one Hetzner account (stop/start/resize call the API through scripts/,
-  # the curl stub answers), a working OAuth client (create/start free the tailnet name through
-  # scripts/tailscale-rm.sh) and archive storage; check/init tests edit it for the missing/rejected paths.
+  # A complete configuration: one Hetzner account (stop/start/resize call its API, the test server
+  # answers), a working OAuth client (create/start free the tailnet name through the Tailscale API) and
+  # archive storage; check/init tests edit it for the missing/rejected paths.
   config
 }
 
@@ -42,9 +59,10 @@ cfg() { yq "$1" "$NODE_CTL_CONFIG"; } # a value of the configuration the CLI wro
 
 inv() { jq -r "${@:2}" "$SERVERS_DIR/$1.json"; }
 line_of() { grep -n -F -- "$1" "$STUB_LOG" | tail -1 | cut -d: -f1; }
-ev() { jq -cr "$1" "$STUB_EVENTS"; } # the events the renderer received (tests/stubs/node collects them)
+ev() { jq -cr "$1" "$STUB_EVENTS"; } # the JSON events of the run (NODE_CTL_EVENTS)
 id_of() { ev "select(.event_type == \"started\" and .action_name == \"$1\") | .action_id" | head -1; }
 said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]; } # in what it printed or in what an action reported
+macos_only() { [ "$(uname)" = Darwin ] || skip "launchd and BSD date are macOS only"; } # the Linux timer has its own tests
 
 @test "create writes the inventory entry with defaults, applies and waits" {
   run "$RAE" create dev1
@@ -55,7 +73,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   [ "$(inv dev1 -c .funnel)" = "{}" ]
   grep -q "terraform: -chdir=terraform apply -input=false -no-color -auto-approve" "$STUB_LOG"
   grep -q "node-ctl-user@dev1 sudo cloud-init status --wait" "$STUB_LOG"
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
 }
 
 @test "create honours options" {
@@ -117,13 +135,32 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   [ "$(line_of 'tailnet/-/devices')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
 }
 
+@test "restore frees the tailnet name of a machine it builds again, not of a powered-off Contabo one" {
+  contabo
+  devices='{"access_token":"at","devices":[{"id":"111","name":"dev1.tail.ts.net","hostname":"dev1","tags":["tag:dev"]}]}'
+  mkdir -p "$SERVERS_DIR"
+  echo '{"state":"archived","account":"main","open_ports":[22],"funnel":{}}' > "$SERVERS_DIR/dev1.json"
+  STUB_CURL_BODY=$devices run "$RAE" restore dev1 # the archived node left the tailnet but still holds the name
+  [ "$status" -eq 0 ]
+  grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
+  [ "$(line_of 'device/111')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
+  "$RAE" stop dev1; : > "$STUB_LOG"
+  run "$RAE" restore dev1 # a Hetzner start boots a new VPS, as start does
+  [ "$status" -eq 0 ]
+  [ "$(line_of 'tailnet/-/devices')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
+  "$RAE" create cb1 --account cb; "$RAE" stop cb1; : > "$STUB_LOG"
+  run "$RAE" restore cb1 # powered off: its node and name are its own
+  [ "$status" -eq 0 ]
+  ! grep -q "tailnet/-/devices" "$STUB_LOG" || false
+}
+
 @test "create deletes a device already squatting the name before provisioning the new one" {
   devices='{"access_token":"at","devices":[{"id":"111","name":"dev1.tail.ts.net","hostname":"dev1","tags":["tag:dev"]}]}'
   STUB_CURL_BODY=$devices run "$RAE" create dev1
   [ "$status" -eq 0 ]
-  grep -q "curl: -fsS -X DELETE .*api/v2/device/111" "$STUB_LOG"
+  grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
   [ "$(line_of 'device/111')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
-  [ "$(grep -c "curl: .*api.tailscale.com.* --max-time 30 --retry 3 --retry-all-errors" "$STUB_LOG")" -eq 3 ] # a stall must not hang create for the TCP timeout
+  [ "$(grep -c "http: .*api.tailscale.com" "$STUB_LOG")" -eq 3 ] # token, list, delete (a stall must not hang create: the timeout of each call is a unit test)
 }
 
 @test "create never deletes a live node that only shares the raw OS hostname under a different tailnet name" {
@@ -135,7 +172,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   ]}'
   STUB_CURL_BODY=$devices run "$RAE" create dev1
   [ "$status" -eq 0 ]
-  grep -q "curl: -fsS -X DELETE .*api/v2/device/111" "$STUB_LOG"
+  grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
   ! grep -q "device/444" "$STUB_LOG" || false # dev1-1 is a different, live node: never touch it
 }
 
@@ -153,18 +190,18 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   for c in start destroy ports expose backup archive restore ssh volume; do
     run "$RAE" $c
     [ "$status" -eq 1 ]
-    [[ $output == "node-ctl: usage: ./node-ctl $c <name"* ]] || false
+    [[ $output == "node-ctl: usage: node-ctl $c <name"* ]] || false
   done
   run "$RAE" create
   [ "$status" -eq 1 ]
-  [[ $output == "node-ctl: usage: ./node-ctl create <name>"* ]] || false
+  [[ $output == "node-ctl: usage: node-ctl create <name>"* ]] || false
 }
 
 @test "help goes to stdout with exit 0, version answers" {
   for h in --help -h help; do
     run bash -c "'$RAE' $h 2>/dev/null"
     [ "$status" -eq 0 ]
-    [[ $output == "usage: ./node-ctl "*"NODE_CTL_LOG"* ]] || false
+    [[ $output == "usage: node-ctl "*"NODE_CTL_LOG"* ]] || false
   done
   run "$RAE" --version
   [ "$status" -eq 0 ]
@@ -177,7 +214,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 @test "progress goes to stderr, only the result to stdout" {
   run bash -c "'$RAE' create dev1 2>/dev/null"
   [ "$status" -eq 0 ]
-  [ "$output" = "ready: ./node-ctl ssh dev1" ]
+  [ "$output" = "ready: node-ctl ssh dev1" ]
   run bash -c "'$RAE' create dev2 2>&1 >/dev/null"
   [[ $output != *"ready:"* ]] || false
   [ -n "$(id_of 'Wait for dev2')" ] # the narration went to the renderer, not to stdout
@@ -187,7 +224,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" create dev1
   STUB_TF_RC=1 run "$RAE" stop dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"terraform apply failed"*"./node-ctl apply"* ]] || false
+  [[ $output == *"terraform apply failed"*"node-ctl apply"* ]] || false
   [ "$(inv dev1 .state)" = stopped ]
 }
 
@@ -207,6 +244,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 }
 
 @test "the autostop job keeps retrying a stop whose apply failed instead of removing itself" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1
   "$RAE" start dev1 --till "2099-06-01 18:30"
   job=$(job_script dev1 | sed 's/-ge [0-9]*/-ge 0/')
@@ -230,9 +268,9 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" create dev1; "$RAE" stop dev1
   STUB_TF_RC=1 run "$RAE" start dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"./node-ctl apply dev1"* ]] || false
+  [[ $output == *"node-ctl apply dev1"* ]] || false
   run "$RAE" start dev1
-  [[ $output == *"dev1 is already running"*"./node-ctl apply dev1"* ]] || false
+  [[ $output == *"dev1 is already running"*"node-ctl apply dev1"* ]] || false
   : > "$STUB_LOG"
   run "$RAE" apply dev1
   [ "$status" -eq 0 ]
@@ -279,12 +317,12 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 @test "create asks which account on a terminal, by number or by tag" {
   config '.hetzner.work = "t2"'
   # script(1) lends a pty, so the question is asked; the answer arrives once the prompt is up (an early EOF would discard it)
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --size 0 --type cx23"
-  [[ $output == *"1) main"*"2) work"*"ready: ./node-ctl ssh dev1"* ]] || false
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --size 0 --type cx23"
+  [[ $output == *"1) main"*"2) work"*"ready: node-ctl ssh dev1"* ]] || false
   [ "$(inv dev1 .account)" = work ]
-  run bash -c "(/bin/sleep 1; printf 'main\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev2 --size 0 --type cx23"
+  run bash -c "(/bin/sleep 1; printf 'main\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev2 --size 0 --type cx23"
   [ "$(inv dev2 .account)" = main ]
-  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev3 --size 0 --type cx23"
+  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev3 --size 0 --type cx23"
   [[ $output == *"not an account: nope"* ]] || false
   [ ! -e "$SERVERS_DIR/dev3.json" ]
 }
@@ -292,11 +330,11 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
 @test "create without a name asks it on a terminal, then the ports; off one the name is a usage error" {
   run "$RAE" create --size 0
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl create <name>"* ]] || false
-  run bash -c "(/bin/sleep 1; printf 'dev1\n'; /bin/sleep 1; printf '80,443\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create --type cx23 --size 0"
-  [[ $output == *"Name of the new machine"*"Public TCP ports"*"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"usage: node-ctl create <name>"* ]] || false
+  run bash -c "(/bin/sleep 1; printf 'dev1\n'; /bin/sleep 1; printf '80,443\n'; /bin/sleep 3) | '$PTY' '$RAE' create --type cx23 --size 0"
+  [[ $output == *"Name of the new machine"*"Public TCP ports"*"ready: node-ctl ssh dev1"* ]] || false
   [ "$(inv dev1 -c .open_ports)" = "[22,80,443]" ]
-  run bash -c "(/bin/sleep 1; printf 'Bad_Name\n'; /bin/sleep 1) | script -q /dev/null '$RAE' create"
+  run bash -c "(/bin/sleep 1; printf 'Bad_Name\n'; /bin/sleep 1) | '$PTY' '$RAE' create"
   [[ $output == *"name must be lowercase"* ]] || false
 }
 
@@ -305,38 +343,38 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" stop dev2
   run "$RAE" start # off a terminal its own usage error stands
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl start <name ...>"* ]] || false
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' start"
+  [[ $output == *"usage: node-ctl start <name ...>"* ]] || false
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' start"
   [[ $output == *"1) all: every stopped machine"*"2) dev2"*stopped* && $output != *"3) "* ]] || false # the running ones cannot be started
   [ "$(inv dev2 .state)" = running ]
-  run bash -c "(/bin/sleep 1; printf 'dev3\n'; /bin/sleep 3) | script -q /dev/null '$RAE' destroy --yes" # options stay after the asked name
+  run bash -c "(/bin/sleep 1; printf 'dev3\n'; /bin/sleep 3) | '$PTY' '$RAE' destroy --yes" # options stay after the asked name
   [ ! -e "$SERVERS_DIR/dev3.json" ]
-  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 1; printf '30\n'; /bin/sleep 3) | script -q /dev/null '$RAE' volume"
+  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 1; printf '30\n'; /bin/sleep 3) | '$PTY' '$RAE' volume"
   [[ $output == *"dev1: 30G at /mnt/volume"* ]] || false
   [ "$(inv dev1 .volume_size)" = 30 ]
-  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 1) | script -q /dev/null '$RAE' ports"
+  run bash -c "(/bin/sleep 1; printf 'nope\n'; /bin/sleep 1) | '$PTY' '$RAE' ports"
   [[ $output == *"not a machine: nope"* ]] || false
-  run bash -c "script -q /dev/null '$RAE' start < /dev/null"
+  run bash -c "'$PTY' '$RAE' start < /dev/null"
   [[ $output == *"no stopped machine for start"* ]] || false
 }
 
 @test "a bare stop or start on a terminal offers all of them first, then each one" {
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" create dev3
-  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 3) | script -q /dev/null '$RAE' stop"
+  run bash -c "(/bin/sleep 1; printf '1\n'; /bin/sleep 3) | '$PTY' '$RAE' stop"
   [[ $output == *"1) all: every running machine"*"2) dev1"*"3) dev2"*"4) dev3"* ]] || false
   [ "$(inv dev1 .state)$(inv dev2 .state)$(inv dev3 .state)" = stoppedstoppedstopped ]
-  run bash -c "(/bin/sleep 1; printf 'dev2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' start"
+  run bash -c "(/bin/sleep 1; printf 'dev2\n'; /bin/sleep 3) | '$PTY' '$RAE' start"
   [ "$(inv dev1 .state)$(inv dev2 .state)$(inv dev3 .state)" = stoppedrunningstopped ]
-  run bash -c "(/bin/sleep 1; printf 'q\n'; /bin/sleep 1) | script -q /dev/null '$RAE' start --type" # --type is one machine: no line for all
+  run bash -c "(/bin/sleep 1; printf 'q\n'; /bin/sleep 1) | '$PTY' '$RAE' start --type" # --type is one machine: no line for all
   [[ $output == *"1) dev1"* && $output != *"all: every"* ]] || false
 }
 
 @test "a name after the options is a name: a terminal is not asked for one" {
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop --all
-  run bash -c "script -q /dev/null '$RAE' start --till 2.9h dev2 < /dev/null"
+  run bash -c "'$PTY' '$RAE' start --till 2.9h dev2 < /dev/null"
   [[ $output != *"? machine"* && $output != *"aborted"* ]] || false
   [ "$(inv dev1 .state)$(inv dev2 .state)" = stoppedrunning ]
-  run bash -c "script -q /dev/null '$RAE' start --till 2h < /dev/null" # an option's value is no name: it still asks
+  run bash -c "'$PTY' '$RAE' start --till 2h < /dev/null" # an option's value is no name: it still asks
   [[ $output == *"1) dev1"* ]] || false
   [ "$(inv dev1 .state)" = stopped ]
 }
@@ -346,13 +384,13 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   "$RAE" stop --all
   run "$RAE" start
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl start <name ...> [--type [type]] [--till time] | --all"* ]] || false
+  [[ $output == *"usage: node-ctl start <name ...> [--type [type]] [--till time] | --all"* ]] || false
   run "$RAE" start dev1 dev2 --type cx33
   [[ $output == *"--type takes one machine"* ]] || false
   : > "$STUB_LOG"
   run "$RAE" start dev1 dev2
   [ "$status" -eq 0 ]
-  [[ $output == *"ready: ./node-ctl ssh dev1"*"ready: ./node-ctl ssh dev2"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"*"ready: node-ctl ssh dev2"* ]] || false
   [ "$(inv dev3 .state)" = stopped ]
   [ "$(grep -c 'terraform: -chdir=terraform apply' "$STUB_LOG")" -eq 1 ]
   run "$RAE" start dev1 dev3
@@ -369,7 +407,7 @@ said() { [[ "$output $(ev '.message // empty' | paste -s -d " " -)" == *"$1"* ]]
   config '.hetzner.work = "t2"'
   "$RAE" create dev1 --account work; : > "$STUB_LOG"
   "$RAE" stop dev1
-  grep -q "curl: -fsS -H Authorization: Bearer t2 .*api.hetzner.cloud/v1/servers?name=dev1" "$STUB_LOG" # image.sh, snapshotting the disk
+  grep -q "http: GET https://api.hetzner.cloud/v1/servers?name=dev1 auth=Bearer t2" "$STUB_LOG" # image.sh, snapshotting the disk
   ! grep -q "Bearer t .*api.hetzner.cloud" "$STUB_LOG" || false
   config # the work account is gone from the configuration
   : > "$STUB_LOG"
@@ -402,11 +440,11 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$(inv dev1 .location)" = EU ]
   [ "$(inv dev1 .image)" = img-ubuntu-24.04 ] # a UUID there, so it is resolved once and kept
   [ "$(inv dev1 -c 'has("volume_size")')" = false ]
-  grep -q "curl: .*standardImage=true.*name=ubuntu-24.04" "$STUB_LOG"
+  grep -q "http: GET .*standardImage=true.*name=ubuntu-24.04" "$STUB_LOG"
   grep -q "terraform: -chdir=terraform/contabo init" "$STUB_LOG"
   grep -q "terraform: -chdir=terraform/contabo apply -input=false -no-color -auto-approve (workspace cb, account cb, contabo ci/u@e/pw)" "$STUB_LOG"
   grep -q "terraform: -chdir=terraform apply -input=false -no-color -auto-approve (workspace main, account main, token t)" "$STUB_LOG"
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
 }
 
 @test "a Contabo password with shell characters reaches the provider as it is" {
@@ -421,8 +459,8 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   run "$RAE" create dev1 --account cb
   [ "$status" -eq 0 ]
   [ "$(grep -n 'apply -input=false -no-color -auto-approve -target=contabo_instance.dev\["dev1"\] (workspace cb' "$STUB_LOG" | cut -d: -f1)" \
-    -lt "$(grep -n 'curl: .*displayName=dev1' "$STUB_LOG" | head -1 | cut -d: -f1)" ]
-  [ "$(grep -n 'curl: .*displayName=dev1' "$STUB_LOG" | head -1 | cut -d: -f1)" \
+    -lt "$(grep -n 'http: GET .*displayName=dev1' "$STUB_LOG" | head -1 | cut -d: -f1)" ]
+  [ "$(grep -n 'http: GET .*displayName=dev1' "$STUB_LOG" | head -1 | cut -d: -f1)" \
     -lt "$(grep -n 'contabo apply -input=false -no-color -auto-approve (workspace cb' "$STUB_LOG" | cut -d: -f1)" ]
   [ "$(ev 'select(.event_type == "completed") | .action_name' | grep -c 'Wait for the dev1 instance')" -eq 1 ]
 }
@@ -443,7 +481,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   STUB_CONTABO_STATUS=provisioning run "$RAE" create dev1 --account cb
   [ "$status" -ne 0 ]
   said "the Contabo instance dev1 is still provisioning after 15 minutes" || false
-  [ "$(grep -c 'curl: .*displayName=dev1' "$STUB_LOG")" -eq 90 ] # polled, with a fresh token each time
+  [ "$(grep -c 'http: GET .*displayName=dev1' "$STUB_LOG")" -eq 90 ] # polled, with a fresh token each time
   ! grep -q "contabo apply -input=false -no-color -auto-approve (workspace cb" "$STUB_LOG" || false
 }
 
@@ -460,7 +498,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   run "$RAE" create dev1 # stdin is not a terminal: nothing to ask on
   [ "$status" -eq 1 ]
   [[ $output == *"several accounts (hetzner/main contabo/cb): pass --account"* ]] || false
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --type V45" # --type: the account is the only question here
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --type V45" # --type: the account is the only question here
   [[ $output == *"1) main (hetzner)"*"2) cb (contabo)"* ]] || false
   [ "$(inv dev1 .account)" = cb ]
   run "$RAE" create dev2 --account nope
@@ -474,7 +512,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   run "$RAE" stop dev1
   [ "$status" -eq 0 ]
   [ "$(inv dev1 .state)" = stopped ]
-  grep -q "curl: .*-X POST .*compute/instances/99/actions/stop" "$STUB_LOG"
+  grep -q "http: POST .*compute/instances/99/actions/stop" "$STUB_LOG"
   ! grep -q "actions/create_image" "$STUB_LOG" || false # the disk stays where it is; there is nothing to snapshot
   ! grep -q "tailscale logout" "$STUB_LOG" || false     # the instance comes back with its node, so it keeps it
   ! grep -q "tailnet/-/devices" "$STUB_LOG" || false
@@ -483,7 +521,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   run "$RAE" start dev1
   [ "$status" -eq 0 ]
   [ "$(inv dev1 .state)" = running ]
-  grep -q "curl: .*-X POST .*compute/instances/99/actions/start" "$STUB_LOG"
+  grep -q "http: POST .*compute/instances/99/actions/start" "$STUB_LOG"
   ! grep -q "tailnet/-/devices" "$STUB_LOG" || false
 }
 
@@ -494,7 +532,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   run "$RAE" restore dev1
   [ "$status" -eq 0 ]
   [ "$(inv dev1 .state)" = running ]
-  grep -q "curl: .*-X POST .*compute/instances/99/actions/start" "$STUB_LOG" # no apply would ever start it again
+  grep -q "http: POST .*compute/instances/99/actions/start" "$STUB_LOG" # no apply would ever start it again
   [ "$(line_of 'actions/start')" -lt "$(line_of 'restic restore')" ]
 }
 
@@ -505,7 +543,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 0 ]
   [ ! -e "$SERVERS_DIR/dev1.json" ]
   ! grep -q "images?type=snapshot" "$STUB_LOG" || false
-  [ "$(ev 'select(.event_type == "planned") | .action_name' | paste -s -d ' ' -)" = "Leave the tailnet Write inventory Apply Terraform" ]
+  [ "$(ev 'select(.event_type == "planned") | .action_name' | paste -s -d ' ' -)" = "Leave the tailnet Write inventory Apply Terraform Free the tailnet name" ]
 }
 
 @test "volume and resize stay Hetzner-only" {
@@ -532,8 +570,8 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   contabo
   run "$RAE" check
   [ "$status" -eq 0 ]
-  grep -q "curl: .*client_id=ci .*client_secret=cs .*username=u@e .*password=pw .*auth.contabo.com" "$STUB_LOG"
-  grep -q "curl: .*Bearer at .*compute/instances" "$STUB_LOG"
+  grep -q "http: POST https://auth.contabo.com/.* body=.*client_id=ci.*client_secret=cs.*username=u@e.*password=pw" "$STUB_LOG"
+  grep -q "http: GET .*compute/instances.* auth=Bearer at" "$STUB_LOG"
   [ "$(ev 'select(.event_type == "log" and .action_name == "accounts") | .message')" = "hetzner/main contabo/cb" ]
   [ -n "$(ev 'select(.event_type == "completed" and .action_name == "Contabo credentials (cb)")')" ]
   "$RAE" create dev1 --account main
@@ -550,7 +588,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$(cfg .contabo.cb.client_id)" = ci ]
   [ "$(cfg .contabo.cb.user)" = "u@e" ]
   [ "$(cfg .contabo.cb.password)" = pw ]
-  grep -q "curl: .*client_id=ci .*auth.contabo.com" "$STUB_LOG"
+  grep -q "http: POST https://auth.contabo.com/.* body=.*client_id=ci" "$STUB_LOG"
   answers main ""
   run "$RAE" init contabo < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
@@ -574,11 +612,11 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   run "$RAE" stop dev1
   [ "$status" -eq 0 ]
   [ "$(inv dev1 .image)" = 4711 ]
-  grep -q "curl: .*servers/7/actions/shutdown" "$STUB_LOG"
+  grep -q "http: POST .*servers/7/actions/shutdown" "$STUB_LOG"
   [ "$(line_of 'actions/shutdown')" -lt "$(line_of 'actions/create_image')" ] # a snapshot of a running disk is one to fsck
   [ "$(line_of 'actions/create_image')" -lt "$(line_of 'images?type=snapshot')" ] # older snapshots go only once the new one is written
   [ "$(line_of 'images?type=snapshot')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
-  ! grep -q "curl: .*-X DELETE .*images/4711" "$STUB_LOG" || false # the one just taken is the one to keep
+  ! grep -q "http: DELETE .*images/4711" "$STUB_LOG" || false # the one just taken is the one to keep
   : > "$STUB_LOG"
   run "$RAE" start dev1
   [ "$status" -eq 0 ]
@@ -596,9 +634,9 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
     run "$RAE" stop dev1
   [ "$status" -eq 0 ]
   [ "$(inv dev1 .image)" = 4712 ]
-  grep -q "curl: .*-X DELETE .*images/4711" "$STUB_LOG"
+  grep -q "http: DELETE .*images/4711" "$STUB_LOG"
   [ "$(line_of 'images/4712')" -lt "$(line_of 'images/4711')" ] # 4712 was polled to available before 4711 went
-  ! grep -q "curl: .*-X DELETE .*images/4712" "$STUB_LOG" || false
+  ! grep -q "http: DELETE .*images/4712" "$STUB_LOG" || false
   ! grep -q "images/4000" "$STUB_LOG" || false
   ! grep -q "images/4001" "$STUB_LOG" || false
 }
@@ -613,7 +651,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$(inv dev1 .image)" = 4712 ]
   ! grep -q "actions/create_image" "$STUB_LOG" || false # a second copy of the same disk would just be billed twice
   ! grep -q "actions/shutdown" "$STUB_LOG" || false
-  grep -q "curl: .*images/4712" "$STUB_LOG" # polled to available, then kept
+  grep -q "http: .*images/4712" "$STUB_LOG" # polled to available, then kept
   ! grep -q "images/4000" "$STUB_LOG" || false # another machine's unfinished snapshot is not this one
 }
 
@@ -623,7 +661,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   : > "$STUB_LOG"
   run "$RAE" stop # off a terminal: a usage error, not every machine
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl stop <name ...> | --all"* ]] || false
+  [[ $output == *"usage: node-ctl stop <name ...> | --all"* ]] || false
   [ "$(inv dev1 .state)" = running ]
   run "$RAE" stop --all
   [ "$status" -eq 0 ]
@@ -656,7 +694,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 1 ]
   [ "$(inv dev1 .state)" = running ]
   [ "$(inv dev2 .state)" = running ]
-  [[ $output == *"retry: ./node-ctl stop dev1 dev2"* ]] || false
+  [[ $output == *"retry: node-ctl stop dev1 dev2"* ]] || false
 }
 
 @test "stop that cannot snapshot the root disk leaves the machine in the inventory as it was" {
@@ -665,7 +703,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 1 ]
   [ "$(inv dev1 .state)" = running ]
   [ "$(inv dev1 .image)" = null ]
-  [[ $output == *"retry: ./node-ctl stop dev1"* ]] || false
+  [[ $output == *"retry: node-ctl stop dev1"* ]] || false
   ! grep -q "terraform: -chdir=terraform apply" "$STUB_LOG" || false # the VPS is not deleted without its disk
 }
 
@@ -692,13 +730,13 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   "$RAE" stop dev1
   run "$RAE" destroy dev1 --yes
   [ "$status" -eq 0 ]
-  grep -q "curl: .*-X DELETE .*images/4711" "$STUB_LOG"
+  grep -q "http: DELETE .*images/4711" "$STUB_LOG"
   [ "$(line_of 'images/4711')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
   [ ! -e "$SERVERS_DIR/dev1.json" ]
   "$RAE" create dev1; : > "$STUB_LOG"
   run "$RAE" archive dev1
   [ "$status" -eq 0 ]
-  grep -q "curl: .*-X DELETE .*images/4711" "$STUB_LOG" # restic holds the data now
+  grep -q "http: DELETE .*images/4711" "$STUB_LOG" # restic holds the data now
   [ "$(line_of 'restic backup')" -lt "$(line_of 'images/4711')" ]
 }
 
@@ -708,7 +746,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 0 ]
   [ "$(inv dev1 .volume_size)" = 40 ]
   [ "$(line_of 'terraform: -chdir=terraform apply')" -lt "$(line_of 'node-ctl-user@dev1 sudo bash -s')" ]
-  grep -q -F '/mnt/volume' "$STUB_LOG" # scripts/mount-volume.sh went over ssh
+  grep -q -F '/mnt/volume' "$STUB_LOG" # mount-volume.sh went over ssh
   [[ $output == *"dev1: 40G at /mnt/volume"* ]] || false
   run "$RAE" volume dev1 50
   [ "$status" -eq 1 ]
@@ -756,8 +794,8 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   ! grep -q "terraform" "$STUB_LOG" || false
 }
 
-# The curl stub answers every request with this body, so it carries the fields tailscale-rm.sh and
-# poweron.sh need too.
+# The test server answers every request with this body, so it carries the fields the tailnet cleanup and
+# the power-on need too.
 # dev1's disk is 40G (primary_disk_size), so cx11 with its 20G disk is out too.
 # locations[].available is the only availability Hetzner still answers (/datacenters is 410 Gone):
 # nbg1 takes a ccx13 and refuses a cx43, for a resize and a start alike.
@@ -930,7 +968,7 @@ types() {
   STUB_TF_RC=1 run "$RAE" resize dev1 ccx13
   [ "$status" -eq 1 ]
   [ "$(inv dev1 .type)" = cx23 ]
-  grep -q "curl: .*-X POST .*servers/7/actions/poweron" "$STUB_LOG"
+  grep -q "http: POST .*servers/7/actions/poweron" "$STUB_LOG"
   [[ $output == *"stayed on cx23"* ]] || false
 }
 @test "expose updates the inventory and replays the whole Funnel configuration on the machine" {
@@ -971,12 +1009,12 @@ types() {
   [[ $output == *"must start with /"* ]] || false
   run "$RAE" expose dev1 http
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl expose <name> <port> [/path]"* ]] || false
+  [[ $output == *"usage: node-ctl expose <name> <port> [/path]"* ]] || false
   [ "$(inv dev1 -c .funnel)" = '{"/":8080}' ]
   ! grep -q "tailscale funnel" "$STUB_LOG" || false # nothing reached the machine
   run "$RAE" expose dev1 --rm
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl expose <name> --rm </path>"* ]] || false
+  [[ $output == *"usage: node-ctl expose <name> --rm </path>"* ]] || false
 }
 
 @test "expose on a stopped machine only edits the inventory; start then configures Funnel" {
@@ -1031,6 +1069,33 @@ types() {
   [ "$(line_of 'node-ctl-user@dev1 sudo systemd-run --quiet --on-active=2 tailscale logout')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
 }
 
+@test "archive on Hetzner forgets the root disk snapshot it deleted; on Contabo the standard image stays" {
+  contabo
+  "$RAE" create dev1 --account main
+  "$RAE" create cb1 --account cb
+  jq '.image = "4242"' "$SERVERS_DIR/dev1.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$SERVERS_DIR/dev1.json"
+  local standard; standard=$(inv cb1 .image)
+  run "$RAE" archive dev1
+  [ "$status" -eq 0 ]
+  [ "$(inv dev1 .state)" = archived ]
+  [ "$(inv dev1 '.image // "none"')" = none ] # the next create boots the base image, not a snapshot that is gone
+  run "$RAE" archive cb1
+  [ "$status" -eq 0 ]
+  [ -n "$standard" ] && [ "$(inv cb1 .image)" = "$standard" ] || false
+  run "$RAE" restore cb1
+  [ "$status" -eq 0 ]
+  [ "$(inv cb1 .image)" = "$standard" ] # a new contract is made from it
+}
+
+@test "restore of an archived Hetzner machine that still names its deleted snapshot boots the base image" {
+  mkdir -p "$SERVERS_DIR"
+  echo '{"state":"archived","account":"main","image":"4242","open_ports":[22],"funnel":{}}' > "$SERVERS_DIR/dev1.json"
+  run "$RAE" restore dev1
+  [ "$status" -eq 0 ]
+  [ "$(inv dev1 .state)" = running ]
+  [ "$(inv dev1 '.image // "none"')" = none ]
+}
+
 @test "restore starts an archived machine and restores the tagged snapshot" {
   mkdir -p "$SERVERS_DIR"
   echo '{"state":"archived","account":"main","open_ports":[22],"funnel":{}}' > "$SERVERS_DIR/dev1.json"
@@ -1039,6 +1104,8 @@ types() {
   [ "$(inv dev1 .state)" = running ]
   [ "$(line_of 'terraform: -chdir=terraform apply')" -lt "$(line_of 'restic restore latest --tag dev1 --target /')" ]
   [ "$(line_of 'systemctl stop docker.socket docker')" -lt "$(line_of 'restic restore latest')" ]
+  # docker made that device node on the new machine before the restore: restic cannot overwrite it and would fail
+  grep -q -F 'restic restore latest --tag dev1 --target / --exclude /data/docker/volumes/backingFsBlockDev' "$STUB_LOG"
 }
 
 @test "restore with a snapshot id skips apply on a running machine" {
@@ -1077,13 +1144,23 @@ types() {
   grep -q 'terraform: -chdir=terraform apply' "$STUB_LOG"
 }
 
+@test "destroy deletes the machine's tailnet node last: a logged-out tagged node stays listed otherwise" {
+  "$RAE" create dev1
+  devices='{"access_token":"at","devices":[{"id":"111","name":"dev1.tail.ts.net","hostname":"dev1","tags":["tag:dev"]}]}'
+  : > "$STUB_LOG"
+  STUB_CURL_BODY=$devices run "$RAE" destroy dev1 --yes
+  [ "$status" -eq 0 ]
+  [ "$(line_of 'terraform: -chdir=terraform apply')" -lt "$(line_of 'http: DELETE')" ]
+  grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
+}
+
 @test "the generated ssh config follows the running machines" {
   conf="$SSH_DIR/config.d/node-ctl"
   "$RAE" create dev1
   "$RAE" create dev2
   grep -qx "Host node-ctl-dev1" "$conf"
   grep -q "  User node-ctl-user" "$conf"
-  grep -q "  UserKnownHostsFile /dev/null" "$conf" # same host-key stance as ./node-ctl ssh
+  grep -q "  UserKnownHostsFile /dev/null" "$conf" # same host-key stance as node-ctl ssh
   "$RAE" stop dev2
   ! grep -qx "Host node-ctl-dev2" "$conf" || false # a stopped machine has no address to offer
   "$RAE" destroy dev1 --yes
@@ -1219,6 +1296,7 @@ types() {
 }
 
 @test "list shows how long a running machine has been up and when its timer stops it" {
+  macos_only
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop dev2
   [ "$(inv dev1 .started)" -le "$(date +%s)" ]
   [ "$(inv dev1 .started)" -gt $(($(date +%s) - 60)) ]
@@ -1318,19 +1396,19 @@ types() {
 }
 
 @test "every command has a --help page, answered before the config is read and without touching anything" {
-  # the dispatch line is the list of commands: one added there without a page fails here
-  cmds=$(grep -E '^  create\|.*\) "cmd_\$cmd"' "$RAE" | cut -d')' -f1 | tr '|' ' ')
-  [ -n "$cmds" ]
+  # the dispatch table is the list of commands: one added there without a page fails here
+  cmds=$(cd "$BATS_TEST_DIRNAME/.." && bun -e 'const { COMMANDS } = await import("./src/cli.ts"); console.log(COMMANDS.join(" "))')
+  [ "$(wc -w <<< "$cmds")" -gt 20 ]
   export NODE_CTL_CONFIG=$BATS_TEST_TMPDIR/missing.yaml
   for c in $cmds help; do
     for h in --help -h; do
       run bash -c "'$RAE' $c $h 2>/dev/null"
       [ "$status" -eq 0 ]
-      [[ $output == "usage: ./node-ctl $c"* ]] || false
+      [[ $output == "usage: node-ctl $c"* ]] || false
     done
     run bash -c "'$RAE' help $c 2>/dev/null"
     [ "$status" -eq 0 ]
-    [[ $output == "usage: ./node-ctl $c"* ]] || false
+    [[ $output == "usage: node-ctl $c"* ]] || false
   done
   run "$RAE" create dev1 --type cx23 --help
   [ "$status" -eq 0 ]
@@ -1370,15 +1448,17 @@ types() {
   [ "$output" = "all good" ]
   [ -z "$(ev 'select(.event_type == "failed")')" ]
   completed=$(ev 'select(.event_type == "completed") | .action_name')
-  for name in Host terraform jq yq curl node ssh restic "$NODE_CTL_CONFIG" accounts tailscale.client_id "Hetzner token (main)" "restic repository" Credentials "Tailscale on this host" Tailnet; do
-    grep -qxF "$name" <<< "$completed"
+  for name in Host terraform ssh restic "$NODE_CTL_CONFIG" accounts tailscale.client_id "Hetzner token (main)" "restic repository" Credentials "Tailscale on this host" Tailnet; do
+    grep -qxF "$name" <<< "$completed" || false
   done
+  # the binary reads YAML, edits JSON and calls the APIs itself: none of these is needed on the host
+  for name in jq yq curl node; do ! grep -qxF "$name" <<< "$completed" || false; done
   [ "$(ev 'select(.event_type == "log" and .action_name == "accounts") | .message')" = hetzner/main ] # the accounts, by provider and tag
   [ "$(ev 'select(.event_type == "planned") | [.index, .total_steps] | @csv' | paste -s -d ' ' -)" = "1,4 2,4 3,4 4,4" ]
-  grep -q "curl: .*Bearer t .*api.hetzner.cloud" "$STUB_LOG"
-  grep -q "curl: .*client_id=i .*client_secret=tskey-client-s .*api.tailscale.com" "$STUB_LOG"
+  grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer t$" "$STUB_LOG"
+  grep -q "http: POST https://api.tailscale.com/.*oauth/token body=client_id=i&client_secret=tskey-client-s" "$STUB_LOG"
   grep -q "restic: cat config" "$STUB_LOG"
-  grep -q "curl: .*Bearer at .*tailnet/-/devices" "$STUB_LOG"
+  grep -q "http: GET .*tailnet/-/devices auth=Bearer at" "$STUB_LOG"
   grep -q "tailscale: status" "$STUB_LOG"
   ! grep -q "node-ctl-user@" "$STUB_LOG" || false # no machine runs, so there is nothing to reach
   ! grep -q "restic: init" "$STUB_LOG" || false
@@ -1405,8 +1485,8 @@ types() {
   [ "$status" -eq 0 ]
   parent=$(id_of Credentials)
   [ "$(ev "select(.event_type == \"started\" and .parent_action_id == \"$parent\") | .action_id" | sort | paste -s -d ' ' -)" = "c1-main c1-work c2 c3" ]
-  grep -q "curl: .*Bearer t .*api.hetzner.cloud" "$STUB_LOG"
-  grep -q "curl: .*Bearer t2 .*api.hetzner.cloud" "$STUB_LOG"
+  grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer t$" "$STUB_LOG"
+  grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer t2$" "$STUB_LOG"
   # all of them start before any finishes
   first_done=$(grep -n '"event_type":"completed"' "$STUB_EVENTS" | grep -E '"action_id":"c[123]' | head -1 | cut -d: -f1)
   last_start=$(grep -n '"event_type":"started"' "$STUB_EVENTS" | grep -E '"action_id":"c[123]' | tail -1 | cut -d: -f1)
@@ -1423,20 +1503,20 @@ types() {
   config '.tailscale.client_secret = ""'
   run "$RAE" check
   [ "$status" -eq 1 ]
-  [ "$(ev 'select(.event_type == "failed" and .action_name == "tailscale.client_secret") | .message')" = "empty: run ./node-ctl init" ]
+  [ "$(ev 'select(.event_type == "failed" and .action_name == "tailscale.client_secret") | .message')" = "empty: run node-ctl init" ]
   [[ $output == *"fix the failed checks"* ]] || false
-  ! grep -q "curl:" "$STUB_LOG" || false
+  ! grep -q "http:" "$STUB_LOG" || false
   config '.hetzner = {}'
   run "$RAE" check
   [ "$status" -eq 1 ]
-  [ "$(ev 'select(.event_type == "failed" and .action_name == "accounts") | .message')" = "no account: run ./node-ctl init hetzner, or ./node-ctl init contabo" ]
-  ! grep -q "curl:" "$STUB_LOG" || false
+  [ "$(ev 'select(.event_type == "failed" and .action_name == "accounts") | .message')" = "no account: run node-ctl init hetzner, or node-ctl init contabo" ]
+  ! grep -q "http:" "$STUB_LOG" || false
 }
 
 @test "check reports a rejected credential and exits non-zero" {
   STUB_FAIL=curl run "$RAE" check
   [ "$status" -eq 1 ]
-  [[ $(ev 'select(.event_type == "failed" and .action_name == "Hetzner token (main)") | .message') == *"curl: (22) 401"* ]] || false
+  [[ $(ev 'select(.event_type == "failed" and .action_name == "Hetzner token (main)") | .message') == *"401"* ]] || false
   [ -n "$(ev 'select(.event_type == "failed" and .action_name == "Tailscale OAuth client")')" ]
   [ -n "$(ev 'select(.event_type == "failed" and .action_name == "Credentials")')" ]
 }
@@ -1449,7 +1529,7 @@ types() {
   rm "$NODE_CTL_CONFIG"
   run "$RAE" check
   [ "$status" -eq 1 ]
-  [ "$(ev "select(.event_type == \"failed\" and .action_name == \"$NODE_CTL_CONFIG\") | .message")" = "missing: run ./node-ctl init" ]
+  [ "$(ev "select(.event_type == \"failed\" and .action_name == \"$NODE_CTL_CONFIG\") | .message")" = "missing: run node-ctl init" ]
 }
 
 # --- init ------------------------------------------------------------------------------------
@@ -1491,7 +1571,7 @@ contabo  cb       1" ]
   [ "$(cfg .contabo.cb.user)" = "u@e" ]
   [ "$(cfg .hetzner.main)" = t ] # the other steps of init are not asked
   ! grep -q "api.tailscale.com/api/v2/oauth/token" "$STUB_LOG" || false
-  grep -q "curl: .*client_id=ci .*auth.contabo.com" "$STUB_LOG"
+  grep -q "http: POST https://auth.contabo.com/.* body=.*client_id=ci" "$STUB_LOG"
   grep -q "terraform: -chdir=terraform apply" "$STUB_LOG" # the ssh key is registered with the new account
   [ "$(ev 'select(.event_type == "planned") | .action_name' | paste -s -d , -)" = "contabo,Apply Terraform" ]
 }
@@ -1517,10 +1597,15 @@ contabo  cb       1" ]
   answers main tok2 ""
   run "$RAE" init hetzner < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  # The step opens the renderer, the first question closes it, the check that follows opens it again:
-  # one long-lived renderer (what it was before) would leave exactly one.
-  [ "$(grep -c '^node: ' "$STUB_LOG")" -ge 2 ]
-  [ "$(ev 'select(.event_type == "completed" and .action_name == "Hetzner token (main)")' | wc -l)" -eq 1 ] # and no event is lost across the restart
+  [ "$(ev 'select(.event_type == "completed" and .action_name == "Hetzner token (main)")' | wc -l)" -eq 1 ] # and no event is lost across the question
+  # as plain lines: the step, then the question, then the check, none inside another
+  answers main tok3 ""
+  NODE_CTL_PROGRESS=plain run "$RAE" init hetzner < "$BATS_TEST_TMPDIR/answers"
+  [ "$status" -eq 0 ]
+  n() { grep -n -F -- "$1" <<< "$output" | head -1 | cut -d: -f1; }
+  [ "$(n 'START hetzner')" -lt "$(n 'Hetzner account: a short tag')" ]
+  [ "$(n 'Hetzner account: a short tag')" -lt "$(n 'START Hetzner token (main)')" ]
+  grep -qx 'Hetzner account: a short tag.*' <<< "$output" # a line of its own
 }
 
 @test "accounts edit replaces the credentials of a tag that already works" {
@@ -1529,7 +1614,7 @@ contabo  cb       1" ]
   [ "$status" -eq 0 ]
   [ "$(cfg .hetzner.main)" = tok2 ]
   [[ $output != *"kept"* ]] || false # an explicit edit asks, where init would keep a working token
-  grep -q "curl: .*Bearer tok2 .*api.hetzner.cloud" "$STUB_LOG"
+  grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer tok2$" "$STUB_LOG"
 }
 
 @test "accounts refuses an unknown cloud and an unknown subcommand" {
@@ -1538,7 +1623,7 @@ contabo  cb       1" ]
   [[ $output == *"not a cloud: nope (hetzner, contabo)"* ]] || false
   run "$RAE" accounts bogus
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl accounts"* ]] || false
+  [[ $output == *"usage: node-ctl accounts"* ]] || false
 }
 
 @test "init asks step by step, verifies every group and writes node-ctl.yaml" {
@@ -1546,7 +1631,7 @@ contabo  cb       1" ]
   answers "" tok "" s3:https://e/b akid asec "" # the ssh key and the preset tailscale client verify and are kept
   run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [[ $output == *"done: ./node-ctl create dev1"* ]] || false
+  [[ $output == *"done: node-ctl create dev1"* ]] || false
   [ "$(cfg .hetzner.main)" = tok ]
   [ "$(cfg .tailscale.client_id)" = cid ]
   [ "$(cfg .restic.repository)" = "s3:https://e/b" ]
@@ -1555,7 +1640,7 @@ contabo  cb       1" ]
   [ "$(cfg .ssh_public_key_file)" = "$SSH_PUBLIC_KEY_FILE" ]
   [ "$(line_of 'api.hetzner.cloud')" -lt "$(line_of 'api.tailscale.com/api/v2/oauth/token')" ] # one credential group verified per step, in order
   [ "$(line_of 'api.tailscale.com/api/v2/oauth/token')" -lt "$(line_of 'restic: cat config')" ]
-  grep -q "curl: .*Bearer tok .*api.hetzner.cloud" "$STUB_LOG"
+  grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer tok$" "$STUB_LOG"
 }
 
 @test "init seeds a missing node-ctl.yaml from the example and keeps its comments" {
@@ -1574,7 +1659,7 @@ contabo  cb       1" ]
   run "$RAE" init hetzner < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
   [ "$(cfg '.hetzner | to_entries | map(.key + "=" + .value) | join(" ")')" = "main=t work=tok2 home=tok3" ]
-  for t in t tok2 tok3; do grep -q "curl: .*Bearer $t .*api.hetzner.cloud" "$STUB_LOG"; done
+  for t in t tok2 tok3; do grep -q "http: GET https://api.hetzner.cloud/.* auth=Bearer $t$" "$STUB_LOG"; done
   [ "$(ev 'select(.event_type == "completed" and (.action_name | startswith("Hetzner token"))) | .action_name' | sort | paste -s -d , -)" = "Hetzner token (home),Hetzner token (main),Hetzner token (work)" ]
   [[ $output == *"Configured: main"* ]] || false # the existing accounts are named, so a tag of theirs replaces a token
   answers "Bad Tag" work tok4 ""
@@ -1592,9 +1677,9 @@ contabo  cb       1" ]
   [ "$status" -eq 0 ]
   [ "$(cfg .tailscale.client_id)" = kid ]
   [ "$(cfg .tailscale.client_secret)" = tskey-client-k ]
-  grep -q 'curl: .*-u apikey: .*--data-binary @- .*tailnet/-/acl' "$STUB_LOG"
+  grep -q 'http: POST .*tailnet/-/acl auth=Basic apikey body=' "$STUB_LOG"
   grep -q '"autogroup:admin"' "$STUB_LOG" # the tagOwners entry was posted back
-  grep -q 'curl: .*tailnet/-/keys -d {"keyType":"client","scopes":\["auth_keys","devices:core"\],"tags":\["tag:dev"\]' "$STUB_LOG"
+  grep -q 'http: POST .*tailnet/-/keys auth=Basic apikey body={"keyType":"client","scopes":\["auth_keys","devices:core"\],"tags":\["tag:dev"\]' "$STUB_LOG"
   ! grep -q "apikey" "$NODE_CTL_CONFIG" || false
 }
 
@@ -1612,22 +1697,26 @@ contabo  cb       1" ]
   ! grep -q "terraform" "$STUB_LOG" || false # nothing is applied while a credential is still broken
 }
 
-@test "check.sh rejects a Tailscale auth key passed as an OAuth client" {
-  TAILSCALE_OAUTH_CLIENT_ID=tskey-auth-k1 TAILSCALE_OAUTH_CLIENT_SECRET=tskey-auth-k1 run scripts/check.sh tailscale
+@test "check rejects a Tailscale auth key passed as an OAuth client" {
+  config '.tailscale.client_id = "tskey-auth-k1" | .tailscale.client_secret = "tskey-auth-k1"'
+  run "$RAE" check
   [ "$status" -eq 1 ]
-  [[ $output == *'"action_name":"Tailscale OAuth client"'*'"event_type":"failed","message":"the client id is a tskey-* key'* ]] || false
+  [[ $(ev 'select(.event_type == "failed" and .action_name == "Tailscale OAuth client") | .message') == "the client id is a tskey-* key"* ]] || false
   ! grep -q "api.tailscale.com" "$STUB_LOG" || false
-  TAILSCALE_OAUTH_CLIENT_ID=k1 TAILSCALE_OAUTH_CLIENT_SECRET=tskey-auth-k1 run scripts/check.sh tailscale
+  config '.tailscale.client_id = "k1" | .tailscale.client_secret = "tskey-auth-k1"'
+  : > "$STUB_EVENTS"
+  run "$RAE" check
   [ "$status" -eq 1 ]
-  [[ $output == *"the secret must start with tskey-client-"* ]] || false
+  [[ $(ev 'select(.event_type == "failed" and .action_name == "Tailscale OAuth client") | .message') == "the secret must start with tskey-client-"* ]] || false
 }
 
-@test "check.sh runs a single group when asked" {
-  TAILSCALE_OAUTH_CLIENT_ID=k1 TAILSCALE_OAUTH_CLIENT_SECRET=tskey-client-s run scripts/check.sh tailscale
+@test "init tailscale verifies the Tailscale client only" {
+  answers k1 tskey-client-s
+  run "$RAE" init tailscale < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
   grep -q "api.tailscale.com" "$STUB_LOG"
-  grep -q 'curl: .*Bearer at .*tailnet/-/keys -d {"capabilities":{"devices":{"create":{"tags":\["tag:dev"\]' "$STUB_LOG" # the key Terraform mints
-  grep -q 'curl: .*-X DELETE .*tailnet/-/keys/kid' "$STUB_LOG"
+  grep -q 'http: POST .*tailnet/-/keys auth=Bearer at body={"capabilities":{"devices":{"create":{"tags":\["tag:dev"\]' "$STUB_LOG" # the key Terraform mints
+  grep -q 'http: DELETE .*tailnet/-/keys/kid' "$STUB_LOG"
   ! grep -q "api.hetzner.cloud" "$STUB_LOG" || false
   ! grep -q "restic:" "$STUB_LOG" || false
 }
@@ -1663,7 +1752,7 @@ contabo  cb       1" ]
   answers "" tok "" ""
   run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [[ $output == *"done: ./node-ctl create dev1"* ]] || false
+  [[ $output == *"done: node-ctl create dev1"* ]] || false
   grep -q "terraform: -chdir=terraform apply -input=false -no-color -auto-approve (workspace main, account main, token tok)" "$STUB_LOG" # the ssh key is registered before the first create
   [ "$(cfg .restic.repository)" = "" ]
   ! grep -q "restic: cat config" "$STUB_LOG" || false
@@ -1674,7 +1763,7 @@ contabo  cb       1" ]
   config '.restic.repository = ""'
   run "$RAE" backup dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"restic.repository is not set"*"./node-ctl init"* ]] || false
+  [[ $output == *"restic.repository is not set"*"node-ctl init"* ]] || false
 }
 
 # --- ssh key in the agent --------------------------------------------------------------------
@@ -1840,7 +1929,7 @@ contabo  cb       1" ]
   "$RAE" start dev2; : > "$STUB_LOG"
   run "$RAE" apply dev2 # named: only those, and the row says which
   [ "$status" -eq 0 ]
-  grep -q 'node-ctl-user@dev2' "$STUB_LOG" && ! grep -q 'node-ctl-user@dev1' "$STUB_LOG"
+  grep -q 'node-ctl-user@dev2' "$STUB_LOG" && ! grep -q 'node-ctl-user@dev1' "$STUB_LOG" || false
   ev 'select(.event_type == "completed") | .action_name' | grep -qx 'Sync the agent setup to dev2'
   "$RAE" stop dev2; : > "$STUB_LOG"
   run "$RAE" apply dev2 # a stopped or unknown name is refused before Terraform runs
@@ -1880,7 +1969,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   rm "$GIT_KEY_FILE"
   run "$RAE" create dev1
   [ "$status" -eq 0 ]
-  [[ $output == *"has no commit key"*"./node-ctl init gitkey"* ]] || false
+  [[ $output == *"has no commit key"*"node-ctl init gitkey"* ]] || false
   ! grep -q 'id_ed25519' "$STUB_LOG" || false
 }
 
@@ -1892,10 +1981,6 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [ "$status" -eq 0 ]
   grep -q "ssh-keygen: -q -t ed25519 -C node-ctl-user commit key -f $GIT_KEY_FILE" "$STUB_LOG" # no -N: the passphrase is asked on the terminal, not put in the process list
   [ -f "$GIT_KEY_FILE" ]
-  # the renderer is drained and gone while ssh-keygen owns the terminal, and restarted afterwards,
-  # so its passphrase prompt cannot land in the middle of the step's own lines
-  [ "$(grep -c 'node: progress/src/cli.ts' "$STUB_LOG")" -gt 1 ]
-  [ "$(line_of 'ssh-keygen:')" -lt "$(line_of 'node: progress/src/cli.ts')" ]
   [[ $(ev 'select(.action_name == "gitkey" and .event_type == "log") | .message') == *"ssh-ed25519 AAAAgit node-ctl-user commit key"* ]] || false
   : > "$STUB_LOG"; : > "$STUB_EVENTS"
   run "$RAE" init gitkey
@@ -1941,7 +2026,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
     run "$RAE" create dev1
   [ "$status" -eq 0 ]
   said "failed only to set a password for the provider's admin user" || false
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
 }
 
 @test "a cloud-init that failed elsewhere too is still a failure" {
@@ -1971,7 +2056,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   logout_id=$(id_of 'Leave the tailnet')
   [[ $(ev "select(.event_type == \"warning\" and .action_id == \"$logout_id\") | .message") == *"deleting its node through the API"* ]] || false
   [ "$(ev 'select(.event_type == "started" and .action_name == "tailscale-rm.sh dev1") | .parent_action_id')" = "$logout_id" ]
-  grep -q "curl: -fsS -X DELETE .*api/v2/device/111" "$STUB_LOG"
+  grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
   ! grep -q "device/222" "$STUB_LOG" || false # a laptop with the same hostname is not ours
   ! grep -q "device/333" "$STUB_LOG" || false
   [ "$(line_of 'device/111')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
@@ -2034,20 +2119,25 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 }
 
 @test "--progress selects the renderer, auto is plain off a terminal, and rejects other values" {
-  "$RAE" create dev1
-  grep -q "node: progress/src/cli.ts --progress=plain" "$STUB_LOG"
+  NODE_CTL_PROGRESS=auto run "$RAE" check
+  [ "$status" -eq 0 ]
+  [[ $output == *"[1/4 host] START Host"* ]] || false
+  : > "$STUB_LOG"; : > "$STUB_EVENTS"
+  run "$RAE" --progress=json check
+  [ "$status" -eq 0 ]
+  [ "$(ev 'select(.event_type == "started") | .action_name' | head -1)" = Host ]
+  [[ $output != *"START Host"* ]] || false
   : > "$STUB_LOG"
-  "$RAE" --progress=json stop dev1
-  grep -q "node: progress/src/cli.ts --progress=json" "$STUB_LOG"
-  : > "$STUB_LOG"
-  NODE_CTL_PROGRESS=tty "$RAE" start dev1
-  grep -q "node: progress/src/cli.ts --progress=tty" "$STUB_LOG"
+  NODE_CTL_PROGRESS=tty run "$RAE" check
+  [ "$status" -eq 0 ]
+  [[ $output == *"✓ [1/4] Host"* && $output != *"START Host"* ]] || false
   run "$RAE" --progress=fancy list
   [ "$status" -eq 1 ]
   [[ $output == *"--progress must be"* ]] || false
-  : > "$STUB_LOG"
-  "$RAE" list >/dev/null
-  ! grep -q "src/cli.ts" "$STUB_LOG" || false # no actions, no renderer
+  : > "$STUB_LOG"; : > "$STUB_EVENTS"
+  run bash -c "'$RAE' list 2>&1 >/dev/null"
+  [ -z "$output" ] # no actions, no renderer
+  [ ! -s "$STUB_EVENTS" ]
 }
 
 @test "Ctrl+C turns the open actions into cancelled and exits 130" {
@@ -2068,7 +2158,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 @test "every run lands in the log with its output and exit status" {
   run "$RAE" create dev1
   grep -q '=== node-ctl create dev1' "$NODE_CTL_LOG"
-  grep -q 'ready: ./node-ctl ssh dev1' "$NODE_CTL_LOG"
+  grep -q 'ready: node-ctl ssh dev1' "$NODE_CTL_LOG"
   grep -q '=== exit 0' "$NODE_CTL_LOG"
   run "$RAE" stop nope
   grep -q 'no such machine: nope' "$NODE_CTL_LOG"
@@ -2086,21 +2176,21 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
 }
 
 @test "the renderer draws past the log and writes the log its own stamped lines, on a terminal and in a pipe" {
-  "$RAE" create dev1; : > "$STUB_LOG"; : > "$NODE_CTL_LOG"
-  out=$(STUB_NODE_DRAW=LIVE-REGION script -q /dev/null "$RAE" ports dev1 22 </dev/null)
-  [[ $out == *LIVE-REGION* ]] || false
-  grep -q -F -- "node: progress/src/cli.ts --progress=tty --log=$NODE_CTL_LOG" "$STUB_LOG"
-  grep -q '=== node-ctl ports dev1 22' "$NODE_CTL_LOG"
-  ! grep -q LIVE-REGION "$NODE_CTL_LOG" || false
-  : > "$STUB_LOG"
-  STUB_NODE_DRAW=PLAIN-LINES run "$RAE" ports dev1 22 # an autostop job or a script: plain lines on stderr, a log with times
-  [[ $output == *PLAIN-LINES* ]] || false
-  grep -q -F -- "node: progress/src/cli.ts --progress=plain --log=$NODE_CTL_LOG" "$STUB_LOG"
-  ! grep -q PLAIN-LINES "$NODE_CTL_LOG" || false
+  stamped='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8} \[1/4 host\] START Host$'
+  out=$(NODE_CTL_PROGRESS=auto "$PTY" "$RAE" check </dev/null)
+  [[ $out == *$'\e['*"Host"* && $out != *"START Host"* ]] || false # a live region on the terminal
+  grep -qE "$stamped" "$NODE_CTL_LOG" # the log gets plain lines with their time
+  ! grep -q $'\e' "$NODE_CTL_LOG" || false # and none of the drawing
+  grep -q '=== node-ctl check' "$NODE_CTL_LOG"
+  : > "$STUB_LOG"; : > "$NODE_CTL_LOG"
+  NODE_CTL_PROGRESS=auto run "$RAE" check # an autostop job or a script: plain lines on stderr, a log with times
+  [[ $output == *"[1/4 host] START Host"* ]] || false
+  ! grep -qE '^[0-9-]+ [0-9:]+ ' <<< "$output" || false # stderr has no times
+  grep -qE "$stamped" "$NODE_CTL_LOG"
 }
 
 @test "a log past 10 MB becomes node-ctl.log.1, replacing the previous one, and the run starts a new log" {
-  dd if=/dev/zero of="$NODE_CTL_LOG" bs=1 count=0 seek=11m 2>/dev/null
+  dd if=/dev/zero of="$NODE_CTL_LOG" bs=1 count=0 seek=$((11 * 1024 * 1024)) 2>/dev/null
   echo "two runs ago" > "$NODE_CTL_LOG.1"
   run "$RAE" list
   [ "$(wc -c < "$NODE_CTL_LOG.1")" -gt 10000000 ]
@@ -2148,67 +2238,31 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [ "$(inv dev1 .state)" = running ]
 }
 
-@test "init links node-ctl into BIN_DIR, the skill into SKILLS_DIR, and leaves a foreign file alone" {
+@test "init links the node-ctl-migrate skill into SKILLS_DIR, and leaves a foreign file alone" {
   blank
   answers "" tok "" ""
   run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [ "$(readlink "$BIN_DIR/node-ctl")" = "$(cd "$(dirname "$RAE")" && pwd)/node-ctl" ]
-  [ "$(readlink "$SKILLS_DIR/node-ctl-migrate")" = "$(cd "$(dirname "$RAE")" && pwd)/skills/node-ctl-migrate" ]
+  [ -L "$SKILLS_DIR/node-ctl-migrate" ]
   grep -q "^disable-model-invocation: true" "$SKILLS_DIR/node-ctl-migrate/SKILL.md" # only ever invoked by hand
-  run "$BIN_DIR/node-ctl" list
-  [ "$status" -eq 0 ]
-  rm "$BIN_DIR/node-ctl"; echo other > "$BIN_DIR/node-ctl"
+  rm "$SKILLS_DIR/node-ctl-migrate"; echo other > "$SKILLS_DIR/node-ctl-migrate"
   answers ""
   run "$RAE" init link < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [ "$(cat "$BIN_DIR/node-ctl")" = other ]
-  [ -L "$SKILLS_DIR/node-ctl-migrate" ] # the other link is still made
-  [[ $(ev 'select(.event_type == "warning") | .message') == *"is not a symlink; left alone"* ]] || false
+  [ "$(cat "$SKILLS_DIR/node-ctl-migrate")" = other ]
+  [[ $(ev 'select(.event_type == "warning") | .message') == *"node-ctl-migrate exists and is not a symlink; left alone"* ]] || false
 }
 
-@test "a node-ctl edited while a command runs is not read past its dispatch" {
-  # bash reads a script as it goes: when the file grew under a running command, the bytes past the
-  # old end were executed as one more command once the last step finished
-  cp "$RAE" "$BATS_TEST_TMPDIR/node-ctl"
-  ln -s "$BATS_TEST_DIRNAME/../scripts" "$BATS_TEST_TMPDIR/scripts" # the copy cds to its own directory
-  mkdir "$BATS_TEST_TMPDIR/edit"
-  printf '#!/usr/bin/env bash\necho "echo edited-while-running" >> "%s"\n' "$BATS_TEST_TMPDIR/node-ctl" > "$BATS_TEST_TMPDIR/edit/terraform"
-  chmod +x "$BATS_TEST_TMPDIR/edit/terraform"
-  PATH="$BATS_TEST_TMPDIR/edit:$PATH" run "$BATS_TEST_TMPDIR/node-ctl" apply
+@test "init unpacks the skill into NODE_CTL_HOME, links it there, and links no node-ctl onto PATH" {
+  blank
+  answers "" tok "" ""
+  mkdir -p "$BATS_TEST_TMPDIR/user"
+  HOME="$BATS_TEST_TMPDIR/user" run "$RAE" init < "$BATS_TEST_TMPDIR/answers"
   [ "$status" -eq 0 ]
-  [[ $output != *edited-while-running* ]] || false
-}
-
-@test "the create price list is what a location will take, not what it prices" {
-  # cx33 is priced in both locations and available in neither (the CX line); cax21 is available in
-  # one of the two it is priced in. Only locations[].available predicts a create: /datacenters (gone now)
-  # offered every CAX although Hetzner answers one with "unsupported location for server type".
-  export STUB_CURL_BODY='{"server_types":[
-    {"id":4,"name":"cx33","cores":8,"memory":16,"disk":80,"cpu_type":"shared",
-     "locations":[{"name":"nbg1","available":false},{"name":"fsn1","available":false}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"16.9000"}},{"location":"fsn1","price_monthly":{"gross":"16.4000"}}]},
-    {"id":9,"name":"cax21","cores":4,"memory":8,"disk":80,"cpu_type":"arm",
-     "locations":[{"name":"nbg1","available":true},{"name":"fsn1","available":false}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"6.9900"}},{"location":"fsn1","price_monthly":{"gross":"6.9900"}}]},
-    {"id":1,"name":"cx22","cores":2,"memory":4,"disk":40,"cpu_type":"shared",
-     "locations":[{"name":"nbg1","available":true},{"name":"fsn1","available":true}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"4.5100"}},{"location":"fsn1","price_monthly":{"gross":"4.5100"}}]},
-    {"id":7,"name":"cx11","cores":1,"memory":2,"disk":20,"cpu_type":"shared","deprecation":{"unavailable_after":"2024-01-01"},
-     "locations":[{"name":"nbg1","available":true}],
-     "prices":[{"location":"nbg1","price_monthly":{"gross":"3.0000"}}]}]}'
-  run env HCLOUD_TOKEN=t "$BATS_TEST_DIRNAME/../scripts/server-types.sh" create
-  [ "$status" -eq 0 ]
-  [ "$output" = $'cx22\t2\t4\tshared\t40\t4.51\tfsn1,nbg1\ncax21\t4\t8\tarm\t80\t6.99\tnbg1' ]
-  # The same body read for a move of a 60G disk in nbg1 (it names no architecture, so all four share
-  # one): every type priced there is listed, deprecated or not, and only one that holds the disk and
-  # that nbg1 takes now says yes.
-  run env HCLOUD_TOKEN=t "$BATS_TEST_DIRNAME/../scripts/server-types.sh" move nbg1 cx22 60
-  [ "$status" -eq 0 ]
-  [ "$output" = $'cx11\t1\t2\tshared\t20\t3\tno\ncx22\t2\t4\tshared\t40\t4.51\tno\ncax21\t4\t8\tarm\t80\t6.99\tyes\ncx33\t8\t16\tshared\t80\t16.9\tno' ]
-  run env HCLOUD_TOKEN=t "$BATS_TEST_DIRNAME/../scripts/server-types.sh"
-  [ "$status" -eq 1 ]
-  [[ $output == *"usage: server-types.sh create | move"* ]] || false
+  [ "$(readlink "$SKILLS_DIR/node-ctl-migrate")" = "$NODE_CTL_HOME/skills/node-ctl-migrate" ]
+  cmp "$NODE_CTL_HOME/skills/node-ctl-migrate/SKILL.md" "$BATS_TEST_DIRNAME/../skills/node-ctl-migrate/SKILL.md"
+  [ ! -e "$BATS_TEST_TMPDIR/user/.local/bin/node-ctl" ] # install.sh puts the binary there, init never links one
+  [ ! -L "$BATS_TEST_TMPDIR/user/.local/bin/node-ctl" ]
 }
 
 @test "create asks for a tariff only on a terminal: off one the defaults stand and nothing is fetched" {
@@ -2219,7 +2273,7 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   ! grep -q server_types "$STUB_LOG" || false
 }
 
-# The price list a new machine is created from: the curl stub answers every request with this body,
+# The price list a new machine is created from: the test server answers every request with this body,
 # so it carries what free_tailnet_name and wait_ready need too. cx33 is sold in two locations, which
 # is the only case that asks a second question.
 create_types() {
@@ -2237,7 +2291,7 @@ create_types() {
 @test "create offers the tariffs cheapest first and asks the location when that tariff is sold in several" {
   create_types
   # the second type, then the second of its two locations
-  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --size 0"
+  run bash -c "(/bin/sleep 1; printf '2\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --size 0"
   [[ $output == *LOCATIONS*cx22*4.51*nbg1*cx33*16.40*fsn1,nbg1* ]] || false # cheapest first, with where each is sold
   [[ $output == *"1) fsn1"*"2) nbg1"* ]] || false
   [ "$(inv dev1 .type)" = cx33 ]
@@ -2246,11 +2300,11 @@ create_types() {
 
 @test "create takes a tariff offered in one location without asking, and refuses a location that cannot take it" {
   create_types
-  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --size 0" # an empty answer takes the cheapest
+  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --size 0" # an empty answer takes the cheapest
   [ "$(inv dev1 .type)" = cx22 ]
   [ "$(inv dev1 .location)" = nbg1 ] # its only location: nothing to ask
   [[ $output != *"1) nbg1"* ]] || false
-  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev2 --size 0 --location fsn1"
+  run bash -c "(/bin/sleep 1; printf '\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev2 --size 0 --location fsn1"
   [[ $output == *"fsn1 cannot take a cx22 right now, only nbg1 can"* ]] || false
   [ ! -e "$SERVERS_DIR/dev2.json" ]
 }
@@ -2258,7 +2312,7 @@ create_types() {
 @test "create on Contabo offers the products its API spec documents and every region, without prices" {
   contabo
   # the third product, then the second region
-  run bash -c "(/bin/sleep 1; printf '3\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --account cb"
+  run bash -c "(/bin/sleep 1; printf '3\n'; /bin/sleep 1; printf '2\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --account cb"
   grep -q 'api.contabo.com/api-v1.yaml' "$STUB_LOG" # read on every create, so a new line-up needs no release
   [[ $output == *"V153 Cloud VPS 4, 100 GB SSD"*"V93 VPS 10 Storage, 300 GB SSD"*"V16 VDS XXL, 720 GB NVMe"* ]] || false
   [[ $output != *EUR* ]] || false # Contabo's API carries no price, so none is shown
@@ -2269,14 +2323,14 @@ create_types() {
 
 @test "create on Contabo stops when the API spec cannot be read, unless --type answers it" {
   contabo
-  run bash -c "STUB_CURL_BODY='openapi: 3.0.3' script -q /dev/null '$RAE' create dev1 --account cb < /dev/null"
+  run bash -c "STUB_CURL_BODY='openapi: 3.0.3' '$PTY' '$RAE' create dev1 --account cb < /dev/null"
   [[ $output == *"could not read the products from Contabo's API spec; --type answers it"* ]] || false
   [ ! -e "$SERVERS_DIR/dev1.json" ]
 }
 
 @test "create on Contabo takes a product id that is not in the documented table" {
   contabo # the table is a shortcut, not a whitelist: an id the spec does not list yet is taken as typed
-  run bash -c "(/bin/sleep 1; printf 'V999\n'; /bin/sleep 1; printf '\n'; /bin/sleep 3) | script -q /dev/null '$RAE' create dev1 --account cb"
+  run bash -c "(/bin/sleep 1; printf 'V999\n'; /bin/sleep 1; printf '\n'; /bin/sleep 3) | '$PTY' '$RAE' create dev1 --account cb"
   [ "$(inv dev1 .type)" = V999 ]
   [ "$(inv dev1 .location)" = EU ] # an empty answer takes the first region
 }
@@ -2296,7 +2350,7 @@ drive() { # drive <keys per question ...> -- <node-ctl args>
   local feed='/bin/sleep 1'
   while [ "$1" != -- ]; do feed="$feed; printf '$1'; /bin/sleep 1"; shift; done
   shift
-  run bash -c "($feed; /bin/sleep 2) | script -q /dev/null bash -c \"stty rows 30 cols 120; exec '$RAE' $*\""
+  run bash -c "($feed; /bin/sleep 2) | '$PTY' bash -c \"stty rows 30 cols 120; exec '$RAE' $*\""
 }
 
 @test "a question with several answers is a menu: arrows move, enter picks, the answer replaces it" {
@@ -2375,10 +2429,10 @@ CATO_URL='https://sso.ias.catonetworks.com/login?ws=acme&redirect_uri=http://127
   "$RAE" create dev1
   run "$RAE" cato dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"no Cato account yet"*"./node-ctl cato dev1 <account> <user>"* ]] || false
+  [[ $output == *"no Cato account yet"*"node-ctl cato dev1 <account> <user>"* ]] || false
   run "$RAE" cato dev1 acme
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl cato"* ]] || false
+  [[ $output == *"usage: node-ctl cato"* ]] || false
   STUB_CATO_OUT='cato-sdp is not installed on dev1' STUB_CATO_RC=1 run "$RAE" cato dev1 acme me@example.com
   [ "$status" -eq 1 ]
   [[ $output == *"cato-sdp is not installed on dev1"* ]] || false
@@ -2395,14 +2449,14 @@ CATO_URL='https://sso.ias.catonetworks.com/login?ws=acme&redirect_uri=http://127
   "$RAE" stop dev1; : > "$STUB_LOG"
   STUB_CATO_OUT=$CATO_URL run "$RAE" start dev1
   [ "$status" -eq 0 ]
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
   [ "$(grep -n -- '--reset-cred' "$STUB_LOG" | head -1 | cut -d: -f1)" -gt "$(grep -n -F 'PRIVATE-TEST-KEY' "$STUB_LOG" | head -1 | cut -d: -f1)" ] # after the ready steps
   grep -qx "open: $CATO_URL" "$STUB_LOG"
   "$RAE" stop dev1; : > "$STUB_LOG"
   STUB_CATO_OUT="no login URL from cato-sdp after 60s:" STUB_CATO_RC=1 run "$RAE" start dev1 # no URL: a warning, the start stands
   [ "$status" -eq 0 ]
-  [[ $output == *"no login URL from cato-sdp"*"retry: ./node-ctl cato dev1"* ]] || false
-  [[ $output == *"ready: ./node-ctl ssh dev1"* ]] || false
+  [[ $output == *"no login URL from cato-sdp"*"retry: node-ctl cato dev1"* ]] || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
   "$RAE" create dev2
   "$RAE" stop dev2; : > "$STUB_LOG"
   run "$RAE" start dev2
@@ -2414,6 +2468,7 @@ CATO_URL='https://sso.ias.catonetworks.com/login?ws=acme&redirect_uri=http://127
 job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.node-ctl.stop.$1.plist"; }
 
 @test "start --till schedules a launchd job that stops the machine at that time of this computer's time zone" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1; : > "$STUB_LOG"
   TZ=Europe/Berlin run "$RAE" start dev1 --till "2099-06-01 18:30"
   [ "$status" -eq 0 ]
@@ -2444,6 +2499,7 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
 }
 
 @test "the job stops a running machine once its time has come, then removes itself; a start without --till drops it" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1
   "$RAE" start dev1 --till "2099-06-01 18:30"
   bash -c "$(job_script dev1)" # not yet: nothing happens
@@ -2460,6 +2516,7 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
 }
 
 @test "start --till also takes how long the machine lives, in hours or minutes, fractions included" {
+  macos_only
   "$RAE" create dev1; "$RAE" stop dev1
   before=$(date +%s)
   run "$RAE" start dev1 --till 6.9h
@@ -2481,6 +2538,7 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
 }
 
 @test "autostop sets, moves or drops the stop of a running machine" {
+  macos_only
   "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop dev2; : > "$STUB_LOG"
   before=$(date +%s)
   run "$RAE" autostop dev1 2h
@@ -2502,8 +2560,217 @@ job_script() { plutil -extract ProgramArguments.2 raw -o - "$LAUNCH_AGENTS/com.n
   [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev2.plist" ]
   run "$RAE" autostop dev1
   [ "$status" -eq 1 ]
-  [[ $output == *"usage: ./node-ctl autostop <name> <time | off>"* ]] || false
+  [[ $output == *"usage: node-ctl autostop <name> <time | off>"* ]] || false
   run "$RAE" autostop dev1 soon
   [ "$status" -eq 1 ]
   [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev1.plist" ]
+}
+
+# The systemd path: on Linux the binary takes it by itself; elsewhere NODE_CTL_PLATFORM, which only tests set, forces it.
+linux() { if [ "$(uname)" = Linux ]; then "$RAE" "$@"; else NODE_CTL_PLATFORM=linux "$RAE" "$@"; fi; }
+unit_file() { echo "$BATS_TEST_TMPDIR/systemd/node-ctl-stop-$1.$2"; } # what the systemd-run stub kept
+
+@test "on Linux start --till runs a transient user timer at that moment in UTC, which list shows and a start without --till drops" {
+  "$RAE" create dev1; "$RAE" stop dev1; : > "$STUB_LOG"
+  TZ=Europe/Berlin run linux start dev1 --till "2099-06-01 18:30"
+  [ "$status" -eq 0 ]
+  # 18:30 in Berlin is 16:30 UTC in summer: the user manager's own time zone does not matter
+  grep -q -- "^systemd-run: --user .*--unit=node-ctl-stop-dev1 --on-calendar=2099-06-01 16:30:00 UTC " "$STUB_LOG"
+  grep -q -- " --property=Restart=on-failure --property=RestartSec=60 " "$STUB_LOG" # a failed stop is retried a minute later
+  grep -q -- " --setenv=NODE_CTL_HOME=$NODE_CTL_HOME " "$STUB_LOG"
+  [ ! -e "$LAUNCH_AGENTS/com.node-ctl.stop.dev1.plist" ]
+  ! grep -q "^launchctl:" "$STUB_LOG" || false
+  TZ=Europe/Berlin run linux list
+  [[ $output == *"dev1  main     starting  0m      2099-06-01 18:30"* ]] || false
+  linux stop dev1
+  linux start dev1 # a timer left from an earlier run would stop this one
+  grep -q "^systemctl: --user stop node-ctl-stop-dev1.timer node-ctl-stop-dev1.service" "$STUB_LOG"
+  [ ! -e "$(unit_file dev1 timer)" ]
+  run linux list
+  [[ $output == *"dev1  main     starting  0m      -"* ]] || false
+}
+
+@test "on Linux the timer runs the stop through this binary, and one that fires for a machine stopped since does nothing" {
+  "$RAE" create dev1
+  linux autostop dev1 2h
+  : > "$STUB_LOG"
+  bash "$(unit_file dev1 service)" # the timer fires
+  [ "$(inv dev1 .state)" = stopped ]
+  grep -q "terraform: -chdir=terraform apply" "$STUB_LOG"
+  : > "$STUB_LOG"
+  run bash "$(unit_file dev1 service)"
+  [ "$status" -eq 0 ] # exit 0: Restart=on-failure does not run it again
+  [[ $output == *"dev1 is not running; nothing to stop"* ]] || false
+  ! grep -q "terraform: .* apply" "$STUB_LOG" || false
+}
+
+@test "on Linux autostop moves or drops the timer of a running machine" {
+  "$RAE" create dev1; : > "$STUB_LOG"
+  linux autostop dev1 2h
+  TZ=UTC linux autostop dev1 "2099-06-01 18:30" # one timer per machine: the earlier one goes first
+  [ "$(grep -c "^systemd-run:" "$STUB_LOG")" -eq 2 ]
+  [ "$(line_of "systemctl: --user stop node-ctl-stop-dev1.timer")" -lt "$(line_of "--on-calendar=2099-06-01 18:30:00 UTC")" ]
+  TZ=UTC run linux list
+  [[ $output == *"dev1  main     starting  0m      2099-06-01 18:30"* ]] || false
+  run linux autostop dev1 off
+  [ "$status" -eq 0 ]
+  [[ $output == *"dev1 has no autostop"* ]] || false
+  [ ! -e "$(unit_file dev1 timer)" ]
+  [ "$(inv dev1 .state)" = running ]
+}
+
+@test "on Linux --till and autostop refuse without a user manager or without linger, say how to fix it, and change nothing" {
+  "$RAE" create dev1; "$RAE" create dev2; "$RAE" stop dev2; : > "$STUB_LOG"
+  STUB_NO_USER_MANAGER=1 run linux start dev2 --till 2h
+  [ "$status" -eq 1 ]
+  [[ $output == *"--till needs a systemd user manager"*"Failed to connect to bus"* ]] || false
+  STUB_LINGER=no run linux start dev2 --till 2h
+  [ "$status" -eq 1 ]
+  [[ $output == *"--till needs lingering for $(id -un)"*"sudo loginctl enable-linger $(id -un)"* ]] || false
+  STUB_LINGER=no run linux autostop dev1 19:30
+  [ "$status" -eq 1 ]
+  [[ $output == *"sudo loginctl enable-linger"* ]] || false
+  [ "$(inv dev2 .state)" = stopped ]
+  ! grep -q "^systemd-run:" "$STUB_LOG" || false
+  ! grep -q "terraform: .* apply" "$STUB_LOG" || false
+  ! grep -q "^loginctl: enable-linger" "$STUB_LOG" || false # never enabled for the user
+}
+
+# install.sh and update against releases the test server serves from $STUB_RELEASES, never GitHub.
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+release() { # release <tag>: the latest release, every asset a script that says its tag, its name and its arguments
+  export STUB_RELEASES="$BATS_TEST_TMPDIR/releases"
+  local a
+  mkdir -p "$STUB_RELEASES"
+  echo "$1" > "$STUB_RELEASES/tag"
+  for a in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+    printf '#!/bin/sh\necho "node-ctl %s %s $*"\n' "$1" "node-ctl-$a" > "$STUB_RELEASES/node-ctl-$a"
+  done
+  (cd "$STUB_RELEASES" && sha256 node-ctl-* > checksums.txt)
+}
+# install.sh as curl ... | sh runs it, through the wrapper for its test server (NODE_CTL_RELEASES)
+install_sh() { NODE_CTL_BIN=sh "$RAE" -s < "$BATS_TEST_DIRNAME/../install.sh"; }
+
+@test "install.sh puts the latest release for this OS and architecture in ~/.local/bin as an executable file" {
+  release v0.261120.1
+  export HOME="$BATS_TEST_TMPDIR/h"
+  run install_sh
+  [ "$status" -eq 0 ]
+  bin=$HOME/.local/bin/node-ctl
+  [ -f "$bin" ] && [ -x "$bin" ] && [ ! -L "$bin" ] || false
+  run "$bin"
+  [[ $output == "node-ctl v0.261120.1 node-ctl-"* ]] || false
+  cmp "$bin" "$STUB_RELEASES/$(echo "$output" | cut -d' ' -f3)"
+  [ "$(ls -A "$HOME/.local/bin")" = node-ctl ] # no temporary file left
+  run install_sh
+  [[ $output == *"$HOME/.local/bin is not on PATH"* ]] || false
+  PATH="$HOME/.local/bin:$PATH" run install_sh
+  [[ $output != *"not on PATH"* ]] || false
+}
+
+@test "install.sh picks the asset of the OS and architecture uname reports, and refuses any other before downloading" {
+  release v0.261120.1
+  export NODE_CTL_BIN_DIR="$BATS_TEST_TMPDIR/bin"
+  for pair in "Darwin arm64 darwin-arm64" "Darwin x86_64 darwin-x64" "Linux x86_64 linux-x64" "Linux aarch64 linux-arm64"; do
+    set -- $pair
+    NODE_CTL_UNAME_S=$1 NODE_CTL_UNAME_M=$2 run install_sh # uname overridden: only tests set these
+    [ "$status" -eq 0 ]
+    cmp "$NODE_CTL_BIN_DIR/node-ctl" "$STUB_RELEASES/node-ctl-$3"
+  done
+  : > "$STUB_LOG"
+  NODE_CTL_UNAME_S=FreeBSD NODE_CTL_UNAME_M=x86_64 run install_sh
+  [ "$status" -eq 1 ]
+  [[ $output == *"unsupported OS: FreeBSD"* ]] || false
+  NODE_CTL_UNAME_S=Linux NODE_CTL_UNAME_M=i686 run install_sh
+  [ "$status" -eq 1 ]
+  [[ $output == *"unsupported architecture: i686"* ]] || false
+  ! grep -q "^http:" "$STUB_LOG" || false
+  cmp "$NODE_CTL_BIN_DIR/node-ctl" "$STUB_RELEASES/node-ctl-linux-arm64" # what was there stays
+}
+
+@test "install.sh again installs the newer release over the old one, and replaces a link with the file" {
+  export NODE_CTL_BIN_DIR="$BATS_TEST_TMPDIR/bin"
+  release v0.261120.1
+  install_sh
+  release v0.261121.1
+  run install_sh
+  [ "$status" -eq 0 ]
+  run "$NODE_CTL_BIN_DIR/node-ctl"
+  [[ $output == "node-ctl v0.261121.1 "* ]] || false
+  echo old > "$BATS_TEST_TMPDIR/checkout-node-ctl"
+  ln -sf "$BATS_TEST_TMPDIR/checkout-node-ctl" "$NODE_CTL_BIN_DIR/node-ctl" # what the bash CLI's checkout left
+  run install_sh
+  [ "$status" -eq 0 ]
+  [ ! -L "$NODE_CTL_BIN_DIR/node-ctl" ] # launchd and systemd jobs run the file, not a link into a checkout
+  cmp "$NODE_CTL_BIN_DIR/node-ctl" "$STUB_RELEASES/$("$NODE_CTL_BIN_DIR/node-ctl" | cut -d' ' -f3)"
+  [ "$(cat "$BATS_TEST_TMPDIR/checkout-node-ctl")" = old ]
+}
+
+@test "install.sh refuses a download whose sha256 does not match and leaves the installed binary byte for byte" {
+  export NODE_CTL_BIN_DIR="$BATS_TEST_TMPDIR/bin"
+  release v0.261120.1
+  install_sh
+  cp "$NODE_CTL_BIN_DIR/node-ctl" "$BATS_TEST_TMPDIR/before"
+  release v0.261121.1
+  for a in "$STUB_RELEASES"/node-ctl-*; do echo tampered >> "$a"; done
+  run install_sh
+  [ "$status" -eq 1 ]
+  [[ $output == *"sha256"*"does not match"* ]] || false
+  cmp "$NODE_CTL_BIN_DIR/node-ctl" "$BATS_TEST_TMPDIR/before"
+  [ "$(ls -A "$NODE_CTL_BIN_DIR")" = node-ctl ]
+}
+
+installed_copy() { # a copy of the binary under test, which update may replace
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/bin/node-ctl"
+  cp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/before"
+  NODE_CTL_BIN=$BATS_TEST_TMPDIR/bin/node-ctl
+}
+
+@test "update refuses a dev build without --force and leaves the binary as it was" {
+  release v0.261120.1
+  installed_copy
+  run "$RAE" update
+  [ "$status" -eq 1 ]
+  [[ $output == *"node-ctl dev is not a release"*"node-ctl update --force"* ]] || false
+  cmp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/before"
+  run "$RAE" update --yes-please
+  [ "$status" -eq 1 ]
+  [[ $output == *"unknown option: --yes-please"* ]] || false
+}
+
+@test "update replaces the binary at the path the scheduled stop runs, and the job then runs the new one" {
+  release v0.261120.1
+  installed_copy
+  "$RAE" create dev1
+  NODE_CTL_SELF= linux autostop dev1 2h # the job runs the binary itself, as it does outside the suite
+  grep -q "/bin/node-ctl --progress=plain stop dev1" "$(unit_file dev1 service)"
+  run "$RAE" update --force
+  [ "$status" -eq 0 ]
+  [[ $output == *"node-ctl dev → v0.261120.1"* ]] || false
+  [ -x "$NODE_CTL_BIN" ] && [ ! -L "$NODE_CTL_BIN" ] || false
+  [ "$(ls -A "$BATS_TEST_TMPDIR/bin")" = node-ctl ]
+  run bash "$(unit_file dev1 service)" # the timer fires
+  [[ $output == "node-ctl v0.261120.1 node-ctl-"*" --progress=plain stop dev1" ]] || false
+}
+
+@test "update refuses a release whose sha256 does not match and the binary stays byte for byte" {
+  release v0.261120.1
+  for a in "$STUB_RELEASES"/node-ctl-*; do echo tampered >> "$a"; done
+  installed_copy
+  run "$RAE" update --force
+  [ "$status" -eq 1 ]
+  said "checksums.txt says" || false
+  cmp "$NODE_CTL_BIN" "$BATS_TEST_TMPDIR/before"
+  [ "$(ls -A "$BATS_TEST_TMPDIR/bin")" = node-ctl ]
+  grep -q "http: GET https://github.com/pro100coder/node-ctl/releases/download/v0.261120.1/checksums.txt" "$STUB_LOG"
+}
+
+@test "apply hands Terraform the Tailscale OAuth client and the inventory in use, in the account's run only" {
+  "$RAE" create dev1
+  : > "$STUB_LOG"
+  run "$RAE" apply
+  [ "$status" -eq 0 ]
+  grep -qx "tfenv: tailscale i/tskey-client-s servers $SERVERS_DIR" "$STUB_LOG" || false
+  [ "$(grep -c '^tfenv:' "$STUB_LOG")" -eq "$(grep -c '^terraform: .*(workspace ' "$STUB_LOG")" ]
 }

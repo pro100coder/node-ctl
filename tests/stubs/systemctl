@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Test stub: a user manager that answers unless STUB_NO_USER_MANAGER is set; it lists and stops the
+# timers the systemd-run stub left in $STUB_SYSTEMD.
+echo "systemctl: $*" >> "$STUB_LOG"
+dir=${STUB_SYSTEMD:-$(dirname "$STUB_LOG")/systemd}
+if [ -n "${STUB_NO_USER_MANAGER:-}" ]; then echo "Failed to connect to bus: No medium found" >&2; exit 1; fi
+[ "${1:-}" != --user ] || shift
+case ${1:-} in
+  show) echo "Version=255" ;;
+  stop) shift; for u in "$@"; do rm -f "$dir/$u"; done ;;
+  list-units)
+    for f in "$dir"/*.timer; do
+      [ -f "$f" ] || continue
+      echo "$(basename "$f") loaded active waiting $(cat "$f")"
+    done ;;
+esac

@@ -4,7 +4,11 @@
 # with a line on each stream like the real one; STUB_TF_STATE is what `state list` prints.
 creds="token ${HCLOUD_TOKEN:-}"
 [ -z "${CNTB_OAUTH2_USER:-}" ] || creds="contabo ${CNTB_OAUTH2_CLIENT_ID:-}/${CNTB_OAUTH2_USER}/${CNTB_OAUTH2_PASS:-}"
-echo "terraform: $*${TF_WORKSPACE:+ (workspace $TF_WORKSPACE, account ${TF_VAR_account:-}, $creds)}" >> "$STUB_LOG"
+home="-chdir=${NODE_CTL_HOME:-/nonexistent}/"
+args=${*//"$home"/-chdir=} # the binary passes an absolute -chdir
+echo "terraform: $args${TF_WORKSPACE:+ (workspace $TF_WORKSPACE, account ${TF_VAR_account:-}, $creds)}" >> "$STUB_LOG"
+# what the tailscale provider and main.tf read from the environment, on a line of its own so the line above stays matchable
+[ -z "${TF_WORKSPACE:-}" ] || echo "tfenv: tailscale ${TAILSCALE_OAUTH_CLIENT_ID:-}/${TAILSCALE_OAUTH_CLIENT_SECRET:-} servers ${TF_VAR_servers_dir:-}" >> "$STUB_LOG"
 case "$*" in
   *"state list"*) [ -z "${STUB_TF_STATE:-}" ] || printf '%s\n' "$STUB_TF_STATE" ;; # the addresses the state holds
   *apply*)

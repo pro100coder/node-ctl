@@ -9,3 +9,7 @@ servers/*.json
 keys/
 node-ctl.yaml
 .claude/reports/
+dist/
+node_modules/
+# bun build --compile (1.3) leaves its temporary executable in the working directory
+*.bun-build

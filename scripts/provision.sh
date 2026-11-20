@@ -51,7 +51,14 @@ install_tailscale() { # Funnel is configured later by ./node-ctl expose over ssh
   tailscale up --auth-key="$TS_AUTHKEY" --hostname="$(hostname)"
 }
 
+# Contabo merges its own cloud-config into ours, and it ships an hourly `echo 1 > drop_caches`: it frees
+# nothing a process could not reclaim anyway and makes every hour start from a cold page cache.
+drop_provider_cron() {
+  rm -f /etc/cron.hourly/free
+}
+
 setup_data
+drop_provider_cron
 install_docker
 install_agents
 install_tailscale

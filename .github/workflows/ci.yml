@@ -1,0 +1,127 @@
+# The whole check on both platforms, then on main a release (ADR-0023): every green push to main is v0.YYMMDD.NUM;
+# a manual run from any other branch publishes the pre-release v0.YYMMDD.0-pre.<run number> of its head.
+name: CI
+
+on:
+  push:
+    branches: ['**'] # not tags: the release job pushes its own, and they need no second run
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash # -eo pipefail, which the default shell lacks
+
+env:
+  BUN_VERSION: 1.3.14
+  TERRAFORM_VERSION: 1.16.3
+  HOMEBREW_NO_AUTO_UPDATE: 1
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: Install bats, shellcheck, jq and yq
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install bats-core shellcheck jq yq
+          else
+            sudo apt-get update -q && sudo apt-get install -y -q bats shellcheck jq
+          fi
+          bats --version; shellcheck --version | sed -n 2p; jq --version; yq --version; bash --version | head -1
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      # /bin first: on macOS that is bash 3.2, the bash users run the suite's rules against, not the runner's Homebrew bash
+      - run: PATH="/bin:$PATH" bash --version | head -1 && PATH="/bin:$PATH" bats tests
+      - name: terraform test
+        run: |
+          for root in terraform terraform/contabo; do
+            terraform -chdir="$root" init -input=false -backend=false -lockfile=readonly
+            terraform -chdir="$root" test
+          done
+      - run: terraform -chdir=terraform fmt -check -recursive
+      - name: shellcheck
+        run: |
+          shopt -s extglob # every stub but the test HTTP server, which is TypeScript
+          shellcheck -e SC2016 scripts/*.sh .github/*.sh tests/pty tests/stubs/!(*.ts)
+
+  release:
+    needs: test
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the tag and the release; nothing else in this workflow writes
+    # One release at a time, so two pushes in a row number one after the other; a run that still loses the
+    # race fails at the tag push instead of moving the tag. A push while another release waits replaces the waiting
+    # one (GitHub keeps one pending job per group): the newest commit is released, the one between is not.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Version
+        id: version
+        env:
+          RUN: ${{ github.event_name == 'workflow_dispatch' && github.run_number || '' }}
+        run: |
+          day=$(date -u +%y%m%d)
+          # the remote's tags, not the clone's: a shallow checkout has none of them
+          v=$(git ls-remote --tags --refs origin "refs/tags/v0.$day.*" | sed 's|.*refs/tags/||' | .github/release-version.sh "$day" ${RUN:+"$RUN"})
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "$v"
+      - name: Build
+        env:
+          NODE_CTL_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for t in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            target=bun-$t
+            # baseline needs no AVX2, which not every VPS CPU offers
+            [ "$t" = linux-x64 ] && target=bun-linux-x64-baseline
+            NODE_CTL_TARGET=$target NODE_CTL_OUTFILE=dist/node-ctl-$t bun run build
+          done
+          (cd dist && sha256sum node-ctl-* > checksums.txt && cat checksums.txt)
+      - name: Check the binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          [ "$(dist/node-ctl-linux-x64 version)" = "node-ctl $VERSION ($(git rev-parse --short HEAD))" ]
+          for f in dist/node-ctl-*; do
+            # app/ is public (ADR-0020): no path of this runner may ride along
+            if strings -a "$f" | grep -F -m 5 -e "$HOME" -e "$GITHUB_WORKSPACE"; then
+              echo "::error::$f names a path of the build runner"; exit 1
+            fi
+          done
+      - name: Tag and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          git tag "$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/$VERSION" # never --force: a tag that exists fails the job and stays put
+          if [ "$PRE" = true ]; then kind=(--prerelease --latest=false); else kind=(--latest); fi
+          gh release create "$VERSION" --verify-tag --title "$VERSION" --generate-notes "${kind[@]}" \
+            dist/node-ctl-darwin-arm64 dist/node-ctl-darwin-x64 dist/node-ctl-linux-x64 dist/node-ctl-linux-arm64 dist/checksums.txt

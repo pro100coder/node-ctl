@@ -54,4 +54,8 @@ run "dev_machine_shape" {
     condition     = strcontains(contabo_instance.dev["running"].user_data, "TS_AUTHKEY=") && !strcontains(contabo_instance.dev["running"].user_data, "DATA_VOLUME=1\n")
     error_message = "cloud-init hands provision.sh its tailnet key, and never a volume: Contabo has no block storage"
   }
+  assert {
+    condition     = strcontains(contabo_instance.dev["running"].user_data, "rm -f /etc/cron.hourly/free")
+    error_message = "provision.sh deletes the hourly drop_caches job Contabo's own cloud-config installs"
+  }
 }

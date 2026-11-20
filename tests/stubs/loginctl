@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Test stub: whether the user lingers is STUB_LINGER, yes unless a test says otherwise.
+echo "loginctl: $*" >> "$STUB_LOG"
+case ${1:-} in show-user) echo "Linger=${STUB_LINGER:-yes}" ;; esac
