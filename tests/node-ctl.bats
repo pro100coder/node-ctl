@@ -1104,6 +1104,8 @@ types() {
   [ "$(inv dev1 .state)" = running ]
   [ "$(line_of 'terraform: -chdir=terraform apply')" -lt "$(line_of 'restic restore latest --tag dev1 --target /')" ]
   [ "$(line_of 'systemctl stop docker.socket docker')" -lt "$(line_of 'restic restore latest')" ]
+  # docker made that device node on the new machine before the restore: restic cannot overwrite it and would fail
+  grep -q -F 'restic restore latest --tag dev1 --target / --exclude /data/docker/volumes/backingFsBlockDev' "$STUB_LOG"
 }
 
 @test "restore with a snapshot id skips apply on a running machine" {

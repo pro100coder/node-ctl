@@ -48,10 +48,12 @@ paths=/data; ! mountpoint -q /mnt/volume || paths="/data /mnt/volume"
 restic backup $paths --tag ${name}
 `;
 
+// backingFsBlockDev is a device node docker makes at every start, so a new machine already has it: restic cannot
+// overwrite one and would fail the whole restore over it, and docker makes its own again anyway.
 const restoreScript = (c: Config, selector: string) => `set -euo pipefail
 ${exports(c)}systemctl stop docker.socket docker
 trap 'systemctl start docker' EXIT
-restic restore ${selector} --target /
+restic restore ${selector} --target / --exclude /data/docker/volumes/backingFsBlockDev
 `;
 
 // A script piped to the machine as one step; its exit status, 0 when it succeeded.
