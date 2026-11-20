@@ -308,7 +308,7 @@ export const destroy = async (ctx: Ctx): Promise<number | void> => {
   if (machine.volume_size) what += ' AND its volume';
   await confirm({ ...ctx.ui, yes: ctx.yes || args[1] === '--yes' }, `This deletes ${name}, ${what}.`, name);
   const up = machine.state === 'running';
-  progress.plan(...(up ? ['Leave the tailnet'] : []), ...(snap ? ['Delete the root disk snapshot'] : []), 'Write inventory', 'Apply Terraform');
+  progress.plan(...(up ? ['Leave the tailnet'] : []), ...(snap ? ['Delete the root disk snapshot'] : []), 'Write inventory', 'Apply Terraform', 'Free the tailnet name');
   if (up) await leaveTailnet(run, name);
   if (snap) await deleteSnapshot(run, name);
   const removed = await progress.withAction('Write inventory', 'inventory', () => {
@@ -320,4 +320,6 @@ export const destroy = async (ctx: Ctx): Promise<number | void> => {
   });
   if (!removed) return 1;
   await apply(config, p, progress, env);
+  // A logged-out tagged node stays listed, offline, until something deletes it: only the next create of the name did.
+  if (!(await freeTailnetName(run, name))) progress.warn(`could not delete the tailnet node of ${name}; remove it in the admin console`);
 };

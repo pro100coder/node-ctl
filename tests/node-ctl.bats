@@ -543,7 +543,7 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   [ "$status" -eq 0 ]
   [ ! -e "$SERVERS_DIR/dev1.json" ]
   ! grep -q "images?type=snapshot" "$STUB_LOG" || false
-  [ "$(ev 'select(.event_type == "planned") | .action_name' | paste -s -d ' ' -)" = "Leave the tailnet Write inventory Apply Terraform" ]
+  [ "$(ev 'select(.event_type == "planned") | .action_name' | paste -s -d ' ' -)" = "Leave the tailnet Write inventory Apply Terraform Free the tailnet name" ]
 }
 
 @test "volume and resize stay Hetzner-only" {
@@ -1142,6 +1142,16 @@ types() {
   [ ! -e "$SERVERS_DIR/dev1.json" ]
   grep -q 'node-ctl-user@dev1 sudo systemd-run --quiet --on-active=2 tailscale logout' "$STUB_LOG"
   grep -q 'terraform: -chdir=terraform apply' "$STUB_LOG"
+}
+
+@test "destroy deletes the machine's tailnet node last: a logged-out tagged node stays listed otherwise" {
+  "$RAE" create dev1
+  devices='{"access_token":"at","devices":[{"id":"111","name":"dev1.tail.ts.net","hostname":"dev1","tags":["tag:dev"]}]}'
+  : > "$STUB_LOG"
+  STUB_CURL_BODY=$devices run "$RAE" destroy dev1 --yes
+  [ "$status" -eq 0 ]
+  [ "$(line_of 'terraform: -chdir=terraform apply')" -lt "$(line_of 'http: DELETE')" ]
+  grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
 }
 
 @test "the generated ssh config follows the running machines" {
