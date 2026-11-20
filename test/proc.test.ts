@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Progress } from '../src/progress/progress.ts';
 import { JsonRenderer } from '../src/progress/render/json.ts';
 import type { ActionEvent } from '../src/progress/types.ts';
-import { actionRun, spawn } from '../src/proc.ts';
+import { actionRun, spawn, whenCancelled } from '../src/proc.ts';
 import { Sink } from './helpers.ts';
 
 const recorded = () => {
@@ -91,3 +91,16 @@ test('Ctrl+C reaches the child, the open action is cancelled, the log keeps the 
   expect(text).toContain('[ready] CANCELLED');
   expect(text).toMatch(/=== exit 130\n$/);
 }, 20_000);
+
+// The terminal's Ctrl+C reaches the child too, and a child with an INT trap can exit before this process
+// has run its own handler: its 130 is the Ctrl+C then, and nothing may go on after it.
+test('a child that exits 130 is a Ctrl+C: the command does not go on after it', async () => {
+  let cancelled = false;
+  whenCancelled(() => (cancelled = true));
+  let went = false;
+  void actionRun(recorded().p, ['sh', '-c', 'exit 130']).then(() => (went = true));
+  for (let i = 0; i < 100 && !cancelled; i++) await Bun.sleep(10);
+  expect(cancelled).toBe(true);
+  expect(went).toBe(false);
+  whenCancelled(() => {});
+});

@@ -98,8 +98,9 @@ export async function spawn(argv: string[], opts: SpawnOptions = {}): Promise<Re
   ]);
   live.add(done);
   const [stdout, stderr] = await done.finally(() => live.delete(done));
-  // Once Ctrl+C came, nothing goes on after a child: bash ran its INT trap however the child ended.
-  if (cancelling || proc.signalCode === 'SIGINT') return cancel();
+  // Once Ctrl+C came, nothing goes on after a child: bash ran its INT trap however the child ended. A child
+  // with an INT trap of its own can exit 130 before this process has run its handler: that is the Ctrl+C too.
+  if (cancelling || proc.signalCode === 'SIGINT' || proc.exitCode === 130) return cancel();
   const signal = proc.signalCode ? constants.signals[proc.signalCode] : undefined;
   return { status: signal ? 128 + signal : (proc.exitCode ?? 1), stdout, stderr, ...(bytes ? { bytes } : {}) };
 }
