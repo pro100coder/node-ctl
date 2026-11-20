@@ -1,6 +1,6 @@
 // The scheduled stop (ADR-0019, ADR-0024): what --till means, the job each host gets, and the refusals
 // that come before anything is scheduled. Run through main against fake launchctl/systemd binaries.
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
@@ -9,9 +9,7 @@ import { main } from '../src/cli.ts';
 import { UserError } from '../src/errors.ts';
 import { fakeBins, Sink } from './helpers.ts';
 
-const tz = process.env.TZ;
-beforeAll(() => (process.env.TZ = 'Europe/Berlin'));
-afterAll(() => (process.env.TZ = tz));
+// The zone is Europe/Berlin for every test (test/zone.ts).
 
 const at = (y: number, mo: number, d: number, h: number, mi: number) => new Date(y, mo - 1, d, h, mi).getTime();
 const refused = (value: string, now = Date.now()) => {

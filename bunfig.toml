@@ -1,0 +1,4 @@
+[test]
+# Bun applies a change of process.env.TZ only once per process, so a test that switched the zone made the
+# next file's dates depend on which file ran first. Every test run lives in one fixed zone instead.
+preload = ["./test/zone.ts"]

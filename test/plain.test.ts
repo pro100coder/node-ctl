@@ -80,17 +80,11 @@ test('json mode writes every event as one line, unchanged', () => {
 });
 
 test('a stamped renderer, the one that writes the log, starts every line with the local time of day', () => {
-  const tz = process.env.TZ;
-  process.env.TZ = 'Europe/Moscow'; // UTC+3 all year: the stamp is this computer's time, like the run header's
-  try {
-    const out = new Sink();
-    const r = new PlainRenderer(out, () => Date.parse('2026-11-18T09:35:07.900Z'), true);
-    r.handle(ev('a1', 'Apply Terraform', 'started'));
-    r.handle(ev('a1', 'Apply Terraform', 'log', { stream: 'stderr', message: 'Error: timeout' }));
-    r.close();
-    expect(out.lines()).toEqual(['2026-11-18 12:35:07 [apply] START Apply Terraform', '2026-11-18 12:35:07 [apply] stderr| Error: timeout']);
-  } finally {
-    if (tz === undefined) delete process.env.TZ;
-    else process.env.TZ = tz;
-  }
+  // the stamp is this computer's time, like the run header's: Europe/Berlin (test/zone.ts), UTC+1 in November
+  const out = new Sink();
+  const r = new PlainRenderer(out, () => Date.parse('2026-11-18T09:35:07.900Z'), true);
+  r.handle(ev('a1', 'Apply Terraform', 'started'));
+  r.handle(ev('a1', 'Apply Terraform', 'log', { stream: 'stderr', message: 'Error: timeout' }));
+  r.close();
+  expect(out.lines()).toEqual(['2026-11-18 10:35:07 [apply] START Apply Terraform', '2026-11-18 10:35:07 [apply] stderr| Error: timeout']);
 });

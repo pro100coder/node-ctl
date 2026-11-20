@@ -5,7 +5,10 @@ provider "registry.terraform.io/contabo/contabo" {
   version     = "0.1.44"
   constraints = "~> 0.1.44"
   hashes = [
+    "h1:CC3SDH1/0uzzik/rzXLQyIOSy2WG7rEw5sT+U6FtZVA=",
     "h1:aml95knEW4J7IUXzV3IxkGVTl4U67dCpHCRGovOzNUw=",
+    "h1:oJR05p5Qz+rTDEcq0ohM5xAQbxy00IST+1Gv/sySp9I=",
+    "h1:rOt66byM9NkzkOLm6b0ufvZbP1Juk7E0ayv7FV67Uxc=",
     "zh:17c8b6b22de03d0cb9f147d3c45b6ebef3bc9fa6529736dcc117955349826883",
     "zh:19bcf3660ac7545103cf999e0066442f9d6350db9654e1496726520cef287246",
     "zh:1e4159d6db6c9c0778c790c29d6c38c8a015ba4d8b153fabb26f030db40ba4df",
@@ -27,7 +30,10 @@ provider "registry.terraform.io/tailscale/tailscale" {
   version     = "0.29.2"
   constraints = "~> 0.17"
   hashes = [
+    "h1:SSZ93MdSAaJ1Xi/VIvZDz5z1sve3BIS+WqDKACvJut0=",
+    "h1:eADNOR3ZnirZXCP+3k0hy9CKQK8sgeVC0lpo08UntZY=",
     "h1:lNitoP/DTekzHnRjZ3RBLthPRZ3aHy6lR7jo2rtoH+0=",
+    "h1:wUSb/6AFeFi905uIodIMA11SyyboCTtDqqNhJYdHweM=",
     "zh:32b453302a684584198a03c2e09d99ef1f6deac2fe26f8dc134d973b07fd0c23",
     "zh:3920bb891a476f30e29248533f667a507c97e93e0a2af010b242e980d6411ca6",
     "zh:630cceb40d8806945ad36e04517f313520ea5cee17bd36e26a8e999567835e1a",
