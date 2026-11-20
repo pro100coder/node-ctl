@@ -4,6 +4,7 @@
 // never its argv, never the environment of ssh, never an event or the log.
 import { apply } from './apply.ts';
 import { need, reach, setup, target, type Ctx, type Run } from './command.ts';
+import { freeTailnetName } from './create.ts';
 import { resticEnv, type Config } from './config.ts';
 import { UserError } from './errors.ts';
 import { exists } from './inventory.ts';
@@ -121,8 +122,11 @@ export const restore = async (ctx: Ctx): Promise<number | void> => {
   const selector = snapshot === 'latest' ? `latest --tag ${name}` : snapshot;
   // A stopped Contabo instance is powered off, and no apply would ever start it again (ADR-0018).
   const powerOn = start && account.provider === 'contabo';
-  progress.plan(...(powerOn ? ['Power on'] : []), ...(start ? ['Write inventory', 'Apply Terraform'] : []), `Wait for ${name}`, `Restore /data of ${name}`);
+  // Any other start is a new VPS joining the tailnet, and a stale node holding the name would make it <name>-1.
+  const fresh = start && (account.provider !== 'contabo' || machine.state === 'archived');
+  progress.plan(...(powerOn ? ['Power on'] : []), ...(fresh ? ['Free the tailnet name'] : []), ...(start ? ['Write inventory', 'Apply Terraform'] : []), `Wait for ${name}`, `Restore /data of ${name}`);
   if (powerOn && !(await power(run, name, true))) progress.warn(`could not power ${name} on; the apply below creates it if it does not exist yet`);
+  if (fresh && !(await freeTailnetName(run, name))) throw new UserError(`could not confirm ${name} is free on the tailnet; fix Tailscale API access, then retry`);
   if (start) {
     const wrote = await writeInventory(run, name, (m) => {
       // archive deleted its disk snapshot; an archive written before it forgot that still names the snapshot

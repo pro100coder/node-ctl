@@ -135,6 +135,25 @@ macos_only() { [ "$(uname)" = Darwin ] || skip "launchd and BSD date are macOS o
   [ "$(line_of 'tailnet/-/devices')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
 }
 
+@test "restore frees the tailnet name of a machine it builds again, not of a powered-off Contabo one" {
+  contabo
+  devices='{"access_token":"at","devices":[{"id":"111","name":"dev1.tail.ts.net","hostname":"dev1","tags":["tag:dev"]}]}'
+  mkdir -p "$SERVERS_DIR"
+  echo '{"state":"archived","account":"main","open_ports":[22],"funnel":{}}' > "$SERVERS_DIR/dev1.json"
+  STUB_CURL_BODY=$devices run "$RAE" restore dev1 # the archived node left the tailnet but still holds the name
+  [ "$status" -eq 0 ]
+  grep -q "http: DELETE .*api/v2/device/111" "$STUB_LOG"
+  [ "$(line_of 'device/111')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
+  "$RAE" stop dev1; : > "$STUB_LOG"
+  run "$RAE" restore dev1 # a Hetzner start boots a new VPS, as start does
+  [ "$status" -eq 0 ]
+  [ "$(line_of 'tailnet/-/devices')" -lt "$(line_of 'terraform: -chdir=terraform apply')" ]
+  "$RAE" create cb1 --account cb; "$RAE" stop cb1; : > "$STUB_LOG"
+  run "$RAE" restore cb1 # powered off: its node and name are its own
+  [ "$status" -eq 0 ]
+  ! grep -q "tailnet/-/devices" "$STUB_LOG" || false
+}
+
 @test "create deletes a device already squatting the name before provisioning the new one" {
   devices='{"access_token":"at","devices":[{"id":"111","name":"dev1.tail.ts.net","hostname":"dev1","tags":["tag:dev"]}]}'
   STUB_CURL_BODY=$devices run "$RAE" create dev1
