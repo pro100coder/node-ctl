@@ -37,3 +37,9 @@ version() { printf '%s' "${tags:-}" | "$BATS_TEST_DIRNAME/../.github/release-ver
   [ "$status" -eq 2 ]
   [[ $output == *"not a run number"* ]] || false
 }
+
+@test "a pre-release reads every tag the pipe sends it: the release step runs under pipefail, and an unread pipe failed it" {
+  run bash -c 'set -o pipefail; seq 1 20000 | sed "s/^/v0.261120./" | "$0" 261120 18' "$BATS_TEST_DIRNAME/../.github/release-version.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = v0.261120.0-pre.18 ]
+}

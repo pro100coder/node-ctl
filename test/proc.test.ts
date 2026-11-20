@@ -75,21 +75,28 @@ test('Ctrl+C reaches the child, the open action is cancelled, the log keeps the 
   const reader = job.stdout.getReader();
   let out = new TextDecoder().decode((await reader.read()).value);
   const pid = Number(out.trim());
-  for (let i = 0; i < 100 && !(existsSync(events) && readFileSync(events, 'utf8').includes('"message":"started"')); i++) await Bun.sleep(50);
-  const sent = Date.now();
-  process.kill(-pid, 'SIGINT');
-  for (let r = await reader.read(); !r.done; r = await reader.read()) out += new TextDecoder().decode(r.value);
-  await job.exited;
-  expect(out).toContain('rc=130');
-  expect(Date.now() - sent).toBeLessThan(10_000); // the 30 s timer after the step was not waited for
-  const all = readFileSync(events, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as ActionEvent);
-  expect(all.filter((e) => e.event_type === 'cancelled').map((e) => e.action_name)).toEqual(['Wait for dev1']);
-  expect(all.some((e) => e.event_type === 'failed' || e.event_type === 'completed')).toBe(false);
-  expect(all.some((e) => e.message?.startsWith('went on'))).toBe(false);
-  const text = readFileSync(log, 'utf8');
-  expect(text).toContain('[ready] stdout| got INT'); // the child had the signal, and its answer was logged
-  expect(text).toContain('[ready] CANCELLED');
-  expect(text).toMatch(/=== exit 130\n$/);
+  // a failed expectation must not leave the fixture behind: it waits 30 s for nothing, or forever when stuck
+  try {
+    for (let i = 0; i < 100 && !(existsSync(events) && readFileSync(events, 'utf8').includes('"message":"started"')); i++) await Bun.sleep(50);
+    const sent = Date.now();
+    process.kill(-pid, 'SIGINT');
+    for (let r = await reader.read(); !r.done; r = await reader.read()) out += new TextDecoder().decode(r.value);
+    await job.exited;
+    expect(out).toContain('rc=130');
+    expect(Date.now() - sent).toBeLessThan(10_000); // the 30 s timer after the step was not waited for
+    const all = readFileSync(events, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as ActionEvent);
+    expect(all.filter((e) => e.event_type === 'cancelled').map((e) => e.action_name)).toEqual(['Wait for dev1']);
+    expect(all.some((e) => e.event_type === 'failed' || e.event_type === 'completed')).toBe(false);
+    expect(all.some((e) => e.message?.startsWith('went on'))).toBe(false);
+    const text = readFileSync(log, 'utf8');
+    expect(text).toContain('[ready] stdout| got INT'); // the child had the signal, and its answer was logged
+    expect(text).toContain('[ready] CANCELLED');
+    expect(text).toMatch(/=== exit 130\n$/);
+  } finally {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {} // already gone
+  }
 }, 20_000);
 
 // The terminal's Ctrl+C reaches the child too, and a child with an INT trap can exit before this process

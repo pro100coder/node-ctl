@@ -14,6 +14,9 @@ if [ $# -gt 1 ]; then
   case $2 in
     '' | *[!0-9]*) echo "release-version.sh: not a run number: $2" >&2; exit 2 ;;
   esac
+  # the tags are read all the same: the release step pipes them in under pipefail, and the producer of a
+  # pipe nobody reads dies of SIGPIPE as soon as that day has one tag to send
+  cat > /dev/null
   echo "v0.$day.0-pre.$2"
   exit 0
 fi
