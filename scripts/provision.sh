@@ -26,6 +26,25 @@ setup_data() {
   [ "${DATA_VOLUME:-}" != 1 ] || /usr/local/sbin/mount-volume # an extra disk at /mnt/volume, when the machine has one
 }
 
+# Neither provider's image has swap, and a build that outgrows RAM gets OOM-killed instead of slowing down.
+# Low swappiness: swap only what is really idle, so an interactive shell is not paged out.
+# A root disk without 2G left after the swapfile gets none: a full disk breaks more than no swap does.
+setup_swap() {
+  if [ ! -f /swapfile ]; then
+    if [ "$(df --output=avail -k / | tail -1)" -lt $((6 * 1024 * 1024)) ]; then
+      echo "setup_swap: under 6G free on /, no swapfile"
+      return 0
+    fi
+    fallocate -l 4G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+  fi
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+  swapon --show=NAME --noheadings | grep -qx /swapfile || swapon /swapfile
+  echo vm.swappiness=10 >/etc/sysctl.d/99-swappiness.conf
+  sysctl -q vm.swappiness=10
+}
+
 # A machine started from the snapshot ./node-ctl stop took has all of this already, with whatever was
 # installed or configured on top of it: re-running the installers would only undo the point of it.
 install_docker() {
@@ -66,6 +85,7 @@ prioritize_ssh() {
 }
 
 setup_data
+setup_swap # before the installers: npm and build-essential are the first to outgrow a small machine's RAM
 drop_provider_cron
 install_docker
 install_agents
