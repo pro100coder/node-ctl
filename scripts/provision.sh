@@ -57,10 +57,19 @@ drop_provider_cron() {
   rm -f /etc/cron.hourly/free
 }
 
+# A loaded machine must still answer ssh: it arrives through tailscaled, which shares system.slice with
+# docker, so both get ten times the default CPU weight. The shell itself is in user.slice, already
+# half the CPU against system.slice. set-property persists in /etc/systemd/system.control.
+prioritize_ssh() {
+  systemctl set-property tailscaled.service CPUWeight=1000
+  systemctl set-property ssh.service CPUWeight=1000
+}
+
 setup_data
 drop_provider_cron
 install_docker
 install_agents
 install_tailscale
+prioritize_ssh # after install_tailscale: tailscaled.service exists only from there
 systemctl try-reload-or-restart ssh # sshd may have started before cloud-init wrote 00-node-ctl.conf
 echo provisioned
