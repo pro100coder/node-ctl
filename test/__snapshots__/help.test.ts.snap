@@ -82,7 +82,8 @@ terraform apply for the whole inventory, once per account, and rewrite ~/.ssh/co
 For after editing servers/<name>.json by hand. Then the named machines (every running one without a
 name) get this computer's agent setup again, as create and start give it: CLAUDE.md, AGENTS.md, the
 skills and the MCP servers. A named machine is also waited for, as start does, so apply <name> finishes a start
-whose apply was cut short. Terraform always applies the whole inventory.
+whose apply was cut short. Last, each of them updates Tailscale (tailscale update), which may restart
+tailscaled; a machine that fails it is a warning. Terraform always applies the whole inventory.
 
 Examples:
   node-ctl apply

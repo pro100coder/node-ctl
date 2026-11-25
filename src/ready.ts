@@ -182,6 +182,16 @@ async function restoreFunnel(run: Run, name: string): Promise<boolean> {
   return Object.keys(readMachine(run.p.servers, name).funnel ?? {}).length ? updateFunnel(run, name) : true;
 }
 
+// The update restarts tailscaled, which carries this very session: in a unit of its own, a dropped ssh
+// leaves apt running instead of killing it halfway through the package.
+const UPDATE_TAILSCALE = `set -euo pipefail
+systemd-run --unit=node-ctl-tailscale-update --collect --wait --pipe --quiet tailscale update --yes </dev/null
+`;
+
+export function updateTailscale(run: Run, name: string): Promise<boolean> {
+  return step(run.progress, `Update Tailscale on ${name}`, 'tailscale', () => remote(name, UPDATE_TAILSCALE, { progress: run.progress, env: run.env }));
+}
+
 // False when a step after the wait failed (it said why); a machine that never answers is an error.
 export async function waitReady(run: Run, name: string): Promise<boolean> {
   await run.progress.withAction(`Wait for ${name}`, 'ready', () => waitLoop(run, name));

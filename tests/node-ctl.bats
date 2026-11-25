@@ -1939,6 +1939,24 @@ contabo  cb       1" ]
   ! grep -q 'terraform: .*apply' "$STUB_LOG" || false
 }
 
+@test "apply updates Tailscale on every running machine in a unit of its own, and a failure costs only a warning" {
+  "$RAE" create dev1
+  "$RAE" create dev2
+  "$RAE" stop dev2; : > "$STUB_LOG"
+  run "$RAE" apply
+  [ "$status" -eq 0 ]
+  # the update restarts tailscaled, which carries the session: apt must not die with it
+  [ "$(grep -c '^systemd-run --unit=node-ctl-tailscale-update .*tailscale update --yes' "$STUB_LOG")" -eq 1 ]
+  ev 'select(.event_type == "completed") | .action_name' | grep -qx 'Update Tailscale on dev1'
+  STUB_SSH_RC=255 run "$RAE" apply
+  [ "$status" -eq 0 ]
+  [[ $output == *"could not update Tailscale on dev1"* ]] || false
+  : > "$STUB_LOG"
+  run "$RAE" apply dev1 # named: the same after the wait
+  [ "$status" -eq 0 ]
+  grep -q '^systemd-run --unit=node-ctl-tailscale-update' "$STUB_LOG"
+}
+
 run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real with that HOME (node here, not the stub)
   sed -n "/<<'MCPJS'/,/^MCPJS\$/p" "$STUB_LOG" | sed '1d;$d' > "$BATS_TEST_TMPDIR/mcp.js"
   HOME=$1 PATH=${PATH#"$BATS_TEST_DIRNAME/stubs:"} node "$BATS_TEST_TMPDIR/mcp.js"
@@ -2200,14 +2218,14 @@ run_mcpjs() { # run_mcpjs <home>: the last MCP merge script sent, run for real w
   [ "$(grep -c '=== node-ctl list' "$NODE_CTL_LOG")" -eq 2 ]
 }
 
-@test "apply is init and apply, then ssh only to sync the agent setup" {
+@test "apply is init and apply, then ssh only to sync the agent setup and update Tailscale" {
   "$RAE" create dev1
   : > "$STUB_LOG"
   run "$RAE" apply
   [ "$status" -eq 0 ]
   [ "$(line_of 'terraform: -chdir=terraform init -input=false -no-color')" -lt "$(line_of 'terraform: -chdir=terraform apply -input=false -no-color -auto-approve')" ]
   [ "$(line_of 'terraform: -chdir=terraform apply -input=false -no-color -auto-approve')" -lt "$(grep -n -m1 '^ssh:' "$STUB_LOG" | cut -d: -f1)" ]
-  [ "$(grep -c '^ssh:' "$STUB_LOG")" -eq 1 ]
+  [ "$(grep -c '^ssh:' "$STUB_LOG")" -eq 2 ]
 }
 
 @test "ssh refuses to run while Tailscale is stopped on this computer" {

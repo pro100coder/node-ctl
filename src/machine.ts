@@ -7,7 +7,7 @@ import { UserError } from './errors.ts';
 import { refreshKnownHosts } from './hostkeys.ts';
 import { editMachine, exists, machineNames, readMachine } from './inventory.ts';
 import { ActionFailure } from './progress/progress.ts';
-import { installAgentFiles, installGitKey, updateFunnel, waitReady } from './ready.ts';
+import { installAgentFiles, installGitKey, updateFunnel, updateTailscale, waitReady } from './ready.ts';
 import { RESOURCES } from './resources.ts';
 import { remote, tailnetSuffix } from './ssh.ts';
 import { read, menu, type Ui } from './ui.ts';
@@ -149,7 +149,9 @@ export const apply = async (ctx: Ctx): Promise<number | void> => {
   if (names.length && !(await reach(run))) return 1; // applied by now: no tailnet only stops the sync
   if (ctx.args.length) {
     for (const name of names) if (!(await waitReady(run, name))) return 1;
-    return;
+  } else {
+    for (const name of names) if (!(await installAgentFiles(run, name))) progress.warn(`could not sync the agent setup to ${name}`);
   }
-  for (const name of names) if (!(await installAgentFiles(run, name))) progress.warn(`could not sync the agent setup to ${name}`);
+  // last: the restart it may bring could cut a step that comes after it
+  for (const name of names) if (!(await updateTailscale(run, name))) progress.warn(`could not update Tailscale on ${name}`);
 };
