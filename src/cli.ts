@@ -17,7 +17,7 @@ import { openLog, tee } from './log.ts';
 import { paths } from './paths.ts';
 import { cancel, whenCancelled } from './proc.ts';
 import { resize } from './resize.ts';
-import { destroy, start, stop } from './stop.ts';
+import { destroy, restart, start, stop } from './stop.ts';
 import { stdinInput, type Input, type Ui } from './ui.ts';
 import { update } from './update.ts';
 import { SHA, VERSION } from './version.ts';
@@ -50,7 +50,7 @@ export type Handler = (ctx: Context) => Promise<number | void> | number | void;
 
 // The dispatch table, in the order of the bash dispatch line; test/cli.test.ts holds every entry to a help page.
 export const COMMANDS = [
-  'create', 'stop', 'start', 'resize', 'volume', 'destroy', 'list', 'load', 'ports', 'expose', 'backup', 'archive',
+  'create', 'stop', 'start', 'restart', 'resize', 'volume', 'destroy', 'list', 'load', 'ports', 'expose', 'backup', 'archive',
   'restore', 'ssh', 'gitkey', 'hostkeys', 'autostop', 'cato', 'apply', 'check', 'init', 'accounts', 'update', 'version',
 ];
 
@@ -77,6 +77,7 @@ const ported = new Map<string, Handler>([
   ['cato', cato],
   ['stop', stop],
   ['start', start],
+  ['restart', restart],
   ['destroy', destroy],
   ['backup', backup],
   ['archive', archive],

@@ -29,14 +29,14 @@ export function compute(env: Env, bearer: string, path: string, init: RequestIni
 type Instance = { instanceId?: unknown; displayName?: unknown; status?: unknown; addOns?: unknown };
 
 // contabo.sh power: an instance is a monthly contract, so stop powers it off instead of deleting it,
-// and start powers it on. The display name is what Terraform sets to the machine's name.
-export async function power(env: Env, a: Account, name: string, on: boolean): Promise<void> {
+// and start powers it on; restart restarts it. The display name is what Terraform sets to the machine's name.
+export async function power(env: Env, a: Account, name: string, action: 'start' | 'stop' | 'restart'): Promise<void> {
   const t = await token(env, a);
   if (!t) throw new Error('Contabo refused the credentials: no access token');
   const answer = (await compute(env, t, `/v1/compute/instances?size=100&displayName=${encodeURIComponent(name)}`)) as { data?: Instance[] } | null;
   const id = answer?.data?.find((d) => d.displayName === name)?.instanceId;
   if (id == null) throw new Error(`no Contabo instance named ${name}`);
-  await compute(env, t, `/v1/compute/instances/${String(id)}/actions/${on ? 'start' : 'stop'}`, { method: 'POST' });
+  await compute(env, t, `/v1/compute/instances/${String(id)}/actions/${action}`, { method: 'POST' });
 }
 
 // contabo.sh wait: until the instance has finished provisioning, 15 minutes at most. Until then a
