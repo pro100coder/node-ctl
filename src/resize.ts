@@ -5,7 +5,7 @@
 import { doApply, updateSshConfig } from './apply.ts';
 import { call, need, setup, target, type Ctx, type Run } from './command.ts';
 import { UserError } from './errors.ts';
-import { diskOf, moveRows, powerOn, serverTypes, type TypeRow } from './hetzner.ts';
+import { diskOf, moveRows, serverAction, serverTypes, type TypeRow } from './hetzner.ts';
 import { editMachine, exists, readMachine } from './inventory.ts';
 import { menu, yesNo, type Ui } from './ui.ts';
 
@@ -123,7 +123,7 @@ export const resize = async (ctx: Ctx): Promise<number | void> => {
   // (resource_unavailable: sold out in that location) leaves it stopped for good. Put the type back and boot it.
   if (!(await progress.withAction('Apply Terraform', 'apply', () => doApply(config, p, progress, env)))) {
     await write(current);
-    if (!(await call(progress, `Power ${name} on again`, 'poweron', () => powerOn(env, token(run, account.tag), name!)))) {
+    if (!(await call(progress, `Power ${name} on again`, 'poweron', () => serverAction(env, token(run, account.tag), name!, 'poweron')))) {
       progress.warn(`could not power ${name} on; do it in the Hetzner console`);
     }
     throw new UserError(`${name} stayed on ${current}: Hetzner refused ${type} (see the apply output above)`);

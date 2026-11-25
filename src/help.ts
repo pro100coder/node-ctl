@@ -31,6 +31,7 @@ export const USAGE = `usage: node-ctl [--progress=auto|tty|plain|json] <command>
                                --type boots it as another server type (the price list resize
                                scrolls; without a value it asks), Hetzner only: the new disk
                                must hold the snapshot
+  restart <name>               reboot the same VPS through its provider, then wait until it answers
   resize <name> [type] [--grow-disk|--keep-disk]   (Hetzner only)
                                another server type: a scrolling price list (up/down, enter); asks about the disk
   ports <name> [port ...]      show the public ports, or replace them (22 is always open)
@@ -236,6 +237,16 @@ Examples:
   node-ctl start dev1 --till 19:30
   node-ctl start dev1 --till "2026-12-01 09:00"
   node-ctl start dev1 --till 6.5h
+`,
+  restart: `usage: node-ctl restart <name>
+
+Reboot a running machine through its provider and wait until it answers from the new boot; it works
+when ssh no longer does. The same VPS: disk, tailnet address, public addresses and the uptime list
+shows stay. Hetzner: an ACPI reboot, so a machine too hung to honour it needs node-ctl stop, then
+start. Contabo: the instance is restarted.
+
+Example:
+  node-ctl restart dev1
 `,
   resize: `usage: node-ctl resize <name> [type] [--grow-disk|--keep-disk]
 
