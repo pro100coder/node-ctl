@@ -46,7 +46,13 @@ install_agents() { # codex wants Node 22+, newer than what Ubuntu ships
 }
 
 install_tailscale() { # Funnel is configured later by ./node-ctl expose over ssh: nothing to do at boot
-  command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
+  # A machine booted from its snapshot has the tailscale it was stopped with. Before `up`: the restart that an
+  # update brings cuts no session yet. A failed update keeps the old one, which still joins.
+  if command -v tailscale >/dev/null; then
+    tailscale update --yes || echo "tailscale update failed, staying on $(tailscale version | head -1)"
+  else
+    curl -fsSL https://tailscale.com/install.sh | sh
+  fi
   # Always: the node was logged out before the snapshot and the key below is a fresh single-use one.
   tailscale up --auth-key="$TS_AUTHKEY" --hostname="$(hostname)"
 }

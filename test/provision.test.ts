@@ -22,3 +22,22 @@ test('provisioning gives tailscaled and sshd a high CPU weight, once tailscaled 
   const main = script.slice(script.lastIndexOf('\nsetup_data\n'));
   expect(main.indexOf('\nprioritize_ssh')).toBeGreaterThan(main.indexOf('\ninstall_tailscale\n'));
 });
+
+// A machine booted from its snapshot keeps the tailscale it was stopped with, however old.
+test('provisioning updates an installed tailscale before it joins, and joins even when the update fails', () => {
+  const fn = script.match(/^install_tailscale\(\) \{[\s\S]*?^\}$/m)?.[0];
+  expect(fn).toBeDefined();
+  for (const status of [0, 1]) {
+    const dir = mkdtempSync(join(tmpdir(), 'node-ctl-provision-'));
+    writeFileSync(join(dir, 'tailscale'), `#!/bin/sh\necho "tailscale $*" >> "${dir}/log"\n[ "$1" != update ] || exit ${status}\n`);
+    chmodSync(join(dir, 'tailscale'), 0o755);
+    const run = Bun.spawnSync(['bash', '-euo', 'pipefail', '-c', `${fn}\ninstall_tailscale`], {
+      env: { PATH: `${dir}:/usr/bin:/bin`, TS_AUTHKEY: 'tskey-test' },
+    });
+    expect(run.exitCode).toBe(0);
+    expect(readFileSync(join(dir, 'log'), 'utf8')).toBe(
+      `tailscale update --yes\n${status ? 'tailscale version\n' : ''}tailscale up --auth-key=tskey-test --hostname=` +
+        Bun.spawnSync(['hostname']).stdout.toString(),
+    );
+  }
+});
