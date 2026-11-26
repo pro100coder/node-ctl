@@ -525,6 +525,41 @@ contabo() { config '.contabo.cb = {"client_id": "ci", "client_secret": "cs", "us
   ! grep -q "tailnet/-/devices" "$STUB_LOG" || false
 }
 
+@test "restart reboots the same VPS and waits until it answers from the new boot" {
+  "$RAE" create dev1
+  started=$(inv dev1 .started); : > "$STUB_LOG"
+  run "$RAE" restart dev1
+  [ "$status" -eq 0 ]
+  grep -q "http: POST .*servers/7/actions/reboot" "$STUB_LOG"
+  # an ssh that answers before the reboot has begun is the old boot, not a restarted machine
+  [ "$(line_of 'actions/reboot')" -lt "$(line_of '/proc/uptime')" ]
+  [ "$(inv dev1 .state)" = running ]
+  [ "$(inv dev1 .started)" = "$started" ] # the same VPS: list counts its uptime from the start, not the reboot
+  ! grep -q "^terraform: apply" "$STUB_LOG" || false
+  [[ $output == *"ready: node-ctl ssh dev1"* ]] || false
+}
+
+@test "restart of a Contabo machine restarts its instance" {
+  contabo
+  "$RAE" create dev1 --account cb; : > "$STUB_LOG"
+  run "$RAE" restart dev1
+  [ "$status" -eq 0 ]
+  grep -q "http: POST .*compute/instances/99/actions/restart" "$STUB_LOG"
+  grep -q "/proc/uptime" "$STUB_LOG"
+}
+
+@test "restart refuses a machine that is not running, and waits for nothing the provider refused" {
+  "$RAE" create dev1; "$RAE" stop dev1; : > "$STUB_LOG"
+  run "$RAE" restart dev1
+  [ "$status" -eq 1 ]
+  [[ $output == *"dev1 is not running"* ]] || false
+  ! grep -q "http:" "$STUB_LOG" || false
+  "$RAE" start dev1; : > "$STUB_LOG"
+  STUB_FAIL=curl run "$RAE" restart dev1
+  [ "$status" -eq 1 ]
+  ! grep -q "/proc/uptime" "$STUB_LOG" || false
+}
+
 @test "restore powers a stopped Contabo machine on before it waits for it" {
   contabo
   "$RAE" create dev1 --account cb

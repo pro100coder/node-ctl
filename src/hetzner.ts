@@ -101,12 +101,13 @@ export async function diskOf(env: Env, token: string, name: string, image?: stri
   }
 }
 
-// Terraform stops a machine before it changes its type and leaves it stopped when Hetzner refuses the
-// new one; nothing in the configuration tracks power state, so no apply would start it again.
-export async function powerOn(env: Env, token: string, name: string): Promise<void> {
+// poweron: Terraform stops a machine before it changes its type and leaves it stopped when Hetzner refuses
+// the new one; nothing in the configuration tracks power state, so no apply would start it again.
+// reboot: restart, an ACPI reboot of the same VPS.
+export async function serverAction(env: Env, token: string, name: string, action: 'poweron' | 'reboot'): Promise<void> {
   const id = first((await get(env, token, `/v1/servers?name=${encodeURIComponent(name)}`))?.servers, 'id');
   if (id == null) throw new Error(`no server named ${name}`);
-  await get(env, token, `/v1/servers/${String(id)}/actions/poweron`, { method: 'POST' });
+  await get(env, token, `/v1/servers/${String(id)}/actions/${action}`, { method: 'POST' });
 }
 
 // The root disk of a machine, kept as a Hetzner snapshot: it holds /data too, so it is the only copy of a

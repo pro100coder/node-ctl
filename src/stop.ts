@@ -11,7 +11,7 @@ import { call, need, reach, setup, target, type Ctx, type Run } from './command.
 import * as contabo from './contabo.ts';
 import { freeTailnetName } from './create.ts';
 import { UserError } from './errors.ts';
-import { createImage, pruneImages } from './hetzner.ts';
+import { createImage, pruneImages, serverAction } from './hetzner.ts';
 import { editMachine, exists, machineNames, readMachine } from './inventory.ts';
 import { ActionFailure } from './progress/progress.ts';
 import { actionRun } from './proc.ts';
@@ -61,7 +61,7 @@ export async function deleteSnapshot(run: Run, name: string): Promise<void> {
 }
 
 export function power(run: Run, name: string, on: boolean): Promise<boolean> {
-  return call(run.progress, on ? 'Power on' : 'Power off', 'power', () => contabo.power(run.env, run.config.contabo[tagOf(run, name)]!, name, on));
+  return call(run.progress, on ? 'Power on' : 'Power off', 'power', () => contabo.power(run.env, run.config.contabo[tagOf(run, name)]!, name, on ? 'start' : 'stop'));
 }
 
 // keep_image: the server off, its disk snapshotted, the image written to the inventory, and only then the
@@ -322,4 +322,25 @@ export const destroy = async (ctx: Ctx): Promise<number | void> => {
   await apply(config, p, progress, env);
   // A logged-out tagged node stays listed, offline, until something deletes it: only the next create of the name did.
   if (!(await freeTailnetName(run, name))) progress.warn(`could not delete the tailnet node of ${name}; remove it in the admin console`);
+};
+
+// The same VPS rebooted through its provider, so it works on a machine ssh no longer reaches: disk, tailnet
+// node, addresses and .started stay. waitReady then wants a boot younger than the request, or it would take
+// the machine still shutting down for one that is back.
+export const restart = async (ctx: Ctx): Promise<number | void> => {
+  const run = setup(ctx);
+  const { p, config, progress, env } = run;
+  const args = await target(ctx, p.servers, 'restart', ['running']);
+  if (!(await reach(run))) return 1;
+  const name = need('restart', args[0], '<name>');
+  const { machine, account } = exists(config, p.servers, name);
+  if (machine.state !== 'running') throw new UserError(`${name} is not running`);
+  progress.plan('Restart', `Wait for ${name}`);
+  const since = Date.now();
+  const rebooted = await call(progress, 'Restart', 'restart', () =>
+    account.provider === 'contabo' ? contabo.power(env, config.contabo[account.tag]!, name, 'restart') : serverAction(env, token(run, name), name, 'reboot'),
+  );
+  if (!rebooted) throw new UserError(`could not restart ${name}; retry: node-ctl restart ${name}`);
+  if (!(await waitReady(run, name, since))) return 1;
+  ctx.io.stdout.write(`ready: node-ctl ssh ${name}\n`);
 };

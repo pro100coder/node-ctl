@@ -23,13 +23,17 @@ const stat = (f: string) => {
 };
 const text = (f: string) => readFileSync(f, 'utf8').replace(/\n+$/, ''); // $(cat file)
 
-// ssh over the tailnet answers and cloud-init has finished, ten minutes at most.
-async function waitLoop(run: Run, name: string): Promise<void> {
+// ssh over the tailnet answers and cloud-init has finished, ten minutes at most. With since (a restart,
+// epoch ms) the machine must also have booted after it: up longer than that is the boot the reboot has not
+// ended yet, and counts as no answer.
+async function waitLoop(run: Run, name: string, since?: number): Promise<void> {
   const { progress, env } = run;
+  const fresh = () =>
+    since === undefined ? '' : `[ "$(cut -d. -f1 /proc/uptime)" -le ${Math.ceil((Date.now() - since) / 1000)} ] || { echo "still up from before the restart" >&2; exit 255; }; `;
   const batch = async (command: string) => spawn(tssh('-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', `node-ctl-user@${await addr(name, env)}`, command), { env });
   let err = '';
   for (let i = 1; i <= 60; i++) {
-    const r = await batch('sudo cloud-init status --wait >/dev/null');
+    const r = await batch(`${fresh()}sudo cloud-init status --wait >/dev/null`);
     err = r.stderr.replace(/\n+$/, '');
     if (r.status === 0) return;
     if (r.status === 2) return progress.warn(`cloud-init finished with recoverable errors on ${name}`);
@@ -193,8 +197,8 @@ export function updateTailscale(run: Run, name: string): Promise<boolean> {
 }
 
 // False when a step after the wait failed (it said why); a machine that never answers is an error.
-export async function waitReady(run: Run, name: string): Promise<boolean> {
-  await run.progress.withAction(`Wait for ${name}`, 'ready', () => waitLoop(run, name));
+export async function waitReady(run: Run, name: string, since?: number): Promise<boolean> {
+  await run.progress.withAction(`Wait for ${name}`, 'ready', () => waitLoop(run, name, since));
   await updateSshConfig(run.p.servers, run.p.sshConfig, run.progress, run.env);
   await updateKnownHosts(run, name);
   return (await installGitKey(run, name)) && (await installAgentFiles(run, name)) && restoreFunnel(run, name);
